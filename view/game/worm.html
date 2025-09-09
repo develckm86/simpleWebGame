@@ -26,8 +26,9 @@
                 <div>점수: <span id="score">0</span></div>
                 <div>레벨: <span id="level">1</span></div>
                 <div>상태: <span id="status" class="text-secondary">대기</span></div>
+                <div>시간: <span id="time">∞</span></div>
             </div>
-            <p class="small text-muted mt-2 mb-0">조작: 방향키 이동 · Space 시작/일시정지 · R 다시 시작</p>
+            <p class="small text-muted mt-2 mb-0">조작: 방향키/WASD 이동 · Space 시작/일시정지 · R 다시 시작</p>
         </div>
 
         <!-- 시작/옵션 패널 -->
@@ -45,8 +46,18 @@
                         </select>
                     </div>
 
+                    <div class="mb-2">
+                        <label for="timeLimit" class="form-label">제한 시간</label>
+                        <select id="timeLimit" class="form-select form-select-sm">
+                            <option value="0">없음</option>
+                            <option value="30" selected>30초</option>
+                            <option value="60">60초</option>
+                            <option value="120">120초</option>
+                        </select>
+                    </div>
+
                     <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="wrap">
+                        <input class="form-check-input" type="checkbox" id="wrap" checked>
                         <label class="form-check-label" for="wrap">벽 통과(반대편으로 이동)</label>
                     </div>
 
@@ -78,6 +89,13 @@
     const START_LEN = 3;
     const SCORE_PER_APPLE = 10;
     const MIN_INTERVAL = 30;
+    const MAX_INTERVAL = 300;           // 너무 느려지는 것 방지
+    const FAST_COUNT = 2;               // 가속 아이템 개수
+    const SLOW_COUNT = 2;               // 감속 아이템 개수
+    const SPEED_UP_FACTOR = 0.5;        // 가속 효과(2배 빨라짐 -> 간격 절반)
+    const SPEED_DOWN_FACTOR = 2.0;      // 감속 효과(2배 느려짐 -> 간격 2배)
+    const TIME_BONUS = 5;               // 시간 +5초 아이템
+    const TIME_PENALTY = 5;             // 시간 -5초 아이템
 
     // ====== 요소 참조 ======
     const canvas = document.getElementById('game');
@@ -86,8 +104,10 @@
     const scoreEl = document.getElementById('score');
     const levelEl = document.getElementById('level');
     const statusEl = document.getElementById('status');
+    const timeEl = document.getElementById('time');
 
     const speedSel = document.getElementById('speed');
+    const timeSel = document.getElementById('timeLimit');
     const wrapChk = document.getElementById('wrap');
     const speedUpChk = document.getElementById('speedUp');
     const btnStart = document.getElementById('btnStart');
@@ -95,6 +115,14 @@
 
     // ====== 상태 ======
     let snake, dir, nextDir, food, interval, loopId, running, level, score;
+    let fastItems, slowItems; // 특수 장애물(먹으면 속도 변동)
+    let timePlusItem = null, timeMinusItem = null; // 제한시간 전용 아이템(각 1개)
+    let pendingFastRespawn = 0, pendingSlowRespawn = 0; // 먹이 먹을 때까지 보류된 리스폰 횟수
+    let timeLimitSec, remainingSec, timerId;
+    // 일시적 속도 효과 관리 (3초 지속)
+    let speedEffectTimeout = null;
+    let savedIntervalBeforeEffect = null;
+    let currentEffectMultiplier = 1;
 
     function initGame() {
         // 초기 지렁이 위치: 화면 중앙에서 오른쪽으로 진행
@@ -105,25 +133,68 @@
         dir = { x: 1, y: 0 };
         nextDir = { x: 1, y: 0 };
         placeFood();
+        placeSpecialItems();
+        placeTimeItems();
+        pendingFastRespawn = 0;
+        pendingSlowRespawn = 0;
         score = 0;
         level = 1;
         interval = parseInt(speedSel.value, 10);
+        timeLimitSec = parseInt(timeSel.value, 10);
+        remainingSec = timeLimitSec > 0 ? timeLimitSec : 0;
+        clearSpeedEffect();
+        stopTimer();
         updateHud();
         draw();
         setStatus('대기');
     }
 
     function setStatus(text) { statusEl.textContent = text; }
-    function updateHud() { scoreEl.textContent = score; levelEl.textContent = level; }
+    function updateHud() {
+        scoreEl.textContent = score;
+        levelEl.textContent = level;
+        if (timeLimitSec > 0) {
+            timeEl.textContent = String(remainingSec);
+        } else {
+            timeEl.textContent = '∞';
+        }
+    }
 
     function placeFood() {
+        const p = findEmptyCell();
+        food = { x: p.x, y: p.y };
+    }
+
+    function placeSpecialItems() {
+        fastItems = [];
+        slowItems = [];
+        for (let i = 0; i < FAST_COUNT; i++) fastItems.push(findEmptyCell());
+        for (let i = 0; i < SLOW_COUNT; i++) slowItems.push(findEmptyCell());
+    }
+
+    function findEmptyCell() {
         while (true) {
-            const fx = Math.floor(Math.random() * COLS);
-            const fy = Math.floor(Math.random() * ROWS);
-            if (!snake.some(s => s.x === fx && s.y === fy)) {
-                food = { x: fx, y: fy };
-                return;
-            }
+            const x = Math.floor(Math.random() * COLS);
+            const y = Math.floor(Math.random() * ROWS);
+            const occupied = (
+                snake.some(s => s.x === x && s.y === y) ||
+                (food && food.x === x && food.y === y) ||
+                (fastItems && fastItems.some(p => p.x === x && p.y === y)) ||
+                (slowItems && slowItems.some(p => p.x === x && p.y === y)) ||
+                (timePlusItem && timePlusItem.x === x && timePlusItem.y === y) ||
+                (timeMinusItem && timeMinusItem.x === x && timeMinusItem.y === y)
+            );
+            if (!occupied) return { x, y };
+        }
+    }
+
+    function placeTimeItems() {
+        if (timeLimitSec > 0) {
+            timePlusItem = findEmptyCell();
+            timeMinusItem = findEmptyCell();
+        } else {
+            timePlusItem = null;
+            timeMinusItem = null;
         }
     }
 
@@ -132,6 +203,7 @@
         loopId = setInterval(tick, interval);
         running = true;
         setStatus('플레이 중');
+        if (timeLimitSec > 0 && !timerId) startTimer();
     }
 
     function stopLoop() {
@@ -139,11 +211,79 @@
         loopId = null;
         running = false;
         setStatus('일시정지');
+        stopTimer();
     }
 
     function resetGame() {
         stopLoop();
+        clearSpeedEffect();
         initGame();
+    }
+
+    function clampInterval(v) {
+        return Math.max(MIN_INTERVAL, Math.min(MAX_INTERVAL, Math.floor(v)));
+    }
+
+    function clearSpeedEffect() {
+        if (speedEffectTimeout) clearTimeout(speedEffectTimeout);
+        speedEffectTimeout = null;
+        if (savedIntervalBeforeEffect != null) {
+            interval = savedIntervalBeforeEffect;
+        }
+        savedIntervalBeforeEffect = null;
+        currentEffectMultiplier = 1;
+        if (running) startLoop();
+    }
+
+    function setSpeedEffect(multiplier, durationMs = 3000) {
+        // 기존 효과가 있으면 원상복구 후 다시 적용
+        if (speedEffectTimeout) {
+            clearTimeout(speedEffectTimeout);
+            speedEffectTimeout = null;
+            if (savedIntervalBeforeEffect != null) {
+                interval = savedIntervalBeforeEffect;
+            }
+        }
+        savedIntervalBeforeEffect = interval;
+        currentEffectMultiplier = multiplier;
+        interval = clampInterval(savedIntervalBeforeEffect * currentEffectMultiplier);
+        if (running) startLoop();
+        speedEffectTimeout = setTimeout(() => {
+            // 효과 종료: 저장해둔 간격으로 복구
+            interval = savedIntervalBeforeEffect != null ? savedIntervalBeforeEffect : interval;
+            savedIntervalBeforeEffect = null;
+            currentEffectMultiplier = 1;
+            speedEffectTimeout = null;
+            if (running) startLoop();
+        }, durationMs);
+    }
+
+    function startTimer() {
+        stopTimer();
+        timerId = setInterval(() => {
+            if (remainingSec > 0) {
+                remainingSec--;
+                updateHud();
+                if (remainingSec <= 0) {
+                    return timeOver();
+                }
+            }
+        }, 1000);
+    }
+
+    function stopTimer() {
+        if (timerId) clearInterval(timerId);
+        timerId = null;
+    }
+
+    function timeOver() {
+        // 시간초과로 종료
+        if (loopId) clearInterval(loopId);
+        loopId = null;
+        stopTimer();
+        running = false;
+        setStatus('시간초과');
+        drawOverlay('TIME OVER', '#ffc107');
     }
 
     function tick() {
@@ -179,16 +319,68 @@
         // 먹이 확인
         if (head.x === food.x && head.y === food.y) {
             score += SCORE_PER_APPLE;
+            // 제한 시간이 설정되어 있으면 시간 초기화
+            if (timeLimitSec > 0) {
+                remainingSec = timeLimitSec;
+            }
             // 속도 점진 가속
             if (speedUpChk.checked) {
-                interval = Math.max(MIN_INTERVAL, Math.floor(interval * 0.95));
-                level++;
-                if (running) startLoop(); // 가속 반영
+                if (speedEffectTimeout) {
+                    // 효과 중이면 기반 속도만 가속하고 현재 효과 재적용
+                    savedIntervalBeforeEffect = clampInterval(savedIntervalBeforeEffect * 0.95);
+                    interval = clampInterval(savedIntervalBeforeEffect * currentEffectMultiplier);
+                    level++;
+                    if (running) startLoop();
+                } else {
+                    interval = clampInterval(interval * 0.95);
+                    level++;
+                    if (running) startLoop(); // 가속 반영
+                }
             }
             updateHud();
             placeFood();
+            // 그동안 보류된 특수 아이템 리스폰 처리
+            for (let i = 0; i < pendingFastRespawn; i++) fastItems.push(findEmptyCell());
+            for (let i = 0; i < pendingSlowRespawn; i++) slowItems.push(findEmptyCell());
+            pendingFastRespawn = 0;
+            pendingSlowRespawn = 0;
         } else {
             snake.pop(); // 성장 없으면 꼬리 제거
+        }
+
+        // 특수 아이템 충돌 확인 (가속/감속)
+        // 가속 아이템
+        const fastIdx = fastItems.findIndex(p => p.x === head.x && p.y === head.y);
+        if (fastIdx !== -1) {
+            // 3초 동안 2배 속도 (간격 절반)
+            setSpeedEffect(SPEED_UP_FACTOR, 3000);
+            // 먹은 아이템 제거, 리스폰은 먹이 먹을 때까지 보류
+            fastItems.splice(fastIdx, 1);
+            pendingFastRespawn++;
+        }
+        // 감속 아이템
+        const slowIdx = slowItems.findIndex(p => p.x === head.x && p.y === head.y);
+        if (slowIdx !== -1) {
+            // 3초 동안 2배 느림 (간격 2배)
+            setSpeedEffect(SPEED_DOWN_FACTOR, 3000);
+            slowItems.splice(slowIdx, 1);
+            pendingSlowRespawn++;
+        }
+
+        // 제한시간 아이템 충돌 확인 (있을 때만)
+        if (timeLimitSec > 0) {
+            if (timePlusItem && head.x === timePlusItem.x && head.y === timePlusItem.y) {
+                remainingSec += TIME_BONUS;
+                updateHud();
+                timePlusItem = findEmptyCell(); // 항상 1개 유지
+            } else if (timeMinusItem && head.x === timeMinusItem.x && head.y === timeMinusItem.y) {
+                remainingSec = Math.max(0, remainingSec - TIME_PENALTY);
+                updateHud();
+                if (remainingSec <= 0) {
+                    return timeOver();
+                }
+                timeMinusItem = findEmptyCell(); // 항상 1개 유지
+            }
         }
 
         draw();
@@ -224,18 +416,133 @@
         }
         ctx.restore();
 
-        // 먹이
-        drawCell(food.x, food.y, '#dc3545');
+        // 먹이(별 아이콘)
+        drawStarCell(food.x, food.y, '#ffc107');
 
         // 지렁이 (머리/몸 색상 구분)
         snake.forEach((seg, i) => {
             drawCell(seg.x, seg.y, i === 0 ? '#0dcaf0' : '#20c997');
         });
+
+        // 특수 아이템: 가속(빨강 위 화살표), 감속(파랑 아래 화살표)
+        fastItems.forEach(p => drawArrowCell(p.x, p.y, 'up', '#dc3545'));
+        slowItems.forEach(p => drawArrowCell(p.x, p.y, 'down', '#0d6efd'));
+
+        // 제한시간 아이템: +5초(초록 시계+), -5초(주황 시계-)
+        if (timePlusItem) drawClockCell(timePlusItem.x, timePlusItem.y, '+', '#198754');
+        if (timeMinusItem) drawClockCell(timeMinusItem.x, timeMinusItem.y, '-', '#fd7e14');
     }
 
     function drawCell(cx, cy, color) {
         ctx.fillStyle = color;
         ctx.fillRect(cx * CELL + 2, cy * CELL + 2, CELL - 4, CELL - 4);
+    }
+
+    // 별 아이콘(셀 내부)에 그리기
+    function drawStarCell(cx, cy, color = '#ffc107') {
+        const x = cx * CELL + 2;
+        const y = cy * CELL + 2;
+        const s = CELL - 4;
+        const cxp = x + s / 2;
+        const cyp = y + s / 2;
+        const outerR = s * 0.45;
+        const innerR = outerR * 0.5;
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+            const angle = (Math.PI / 5) * i - Math.PI / 2; // 위쪽을 향하도록 회전
+            const r = i % 2 === 0 ? outerR : innerR;
+            const px = cxp + r * Math.cos(angle);
+            const py = cyp + r * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // 시계 아이콘(셀 내부) +/-(텍스트) 렌더링
+    function drawClockCell(cx, cy, sign = '+', color = '#198754') {
+        const x = cx * CELL + 2;
+        const y = cy * CELL + 2;
+        const s = CELL - 4;
+        const cxp = x + s / 2;
+        const cyp = y + s / 2;
+
+        ctx.save();
+        // 시계 원형
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cxp, cyp, s * 0.38, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // 시계 바늘 (12시 방향)
+        ctx.beginPath();
+        ctx.moveTo(cxp, cyp);
+        ctx.lineTo(cxp, cyp - s * 0.23);
+        ctx.stroke();
+
+        // + 또는 - 기호
+        ctx.fillStyle = color;
+        ctx.font = `${Math.floor(s * 0.6)}px system-ui`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(sign, cxp, cyp + s * 0.12);
+        ctx.restore();
+    }
+
+    // 화살표 아이콘(셀 내부)에 그리기
+    function drawArrowCell(cx, cy, direction = 'up', color = '#ffffff') {
+        const x = cx * CELL + 2;
+        const y = cy * CELL + 2;
+        const s = CELL - 4; // 셀 내부 패딩 고려
+
+        ctx.save();
+        ctx.fillStyle = color;
+
+        // 화살 크기 비율
+        const shaftWidth = Math.max(4, Math.floor(s * 0.22));
+        const shaftLength = Math.floor(s * 0.45);
+        const headSize = Math.floor(s * 0.35);
+
+        if (direction === 'up') {
+            // 삼각형 머리 (위쪽)
+            const hx = x + s / 2;
+            const hy = y + Math.floor(s * 0.15);
+            ctx.beginPath();
+            ctx.moveTo(hx, hy);                 // 꼭짓점
+            ctx.lineTo(x + Math.floor(s * 0.2), hy + headSize);
+            ctx.lineTo(x + s - Math.floor(s * 0.2), hy + headSize);
+            ctx.closePath();
+            ctx.fill();
+
+            // 몸통(shaft)
+            const sx = Math.floor(hx - shaftWidth / 2);
+            const sy = hy + headSize;
+            ctx.fillRect(sx, sy, shaftWidth, shaftLength);
+        } else {
+            // direction === 'down'
+            // 몸통(shaft)
+            const hx = x + s / 2;
+            const shaftTop = y + Math.floor(s * 0.15);
+            const sx = Math.floor(hx - shaftWidth / 2);
+            ctx.fillRect(sx, shaftTop, shaftWidth, shaftLength);
+
+            // 삼각형 머리 (아래쪽)
+            const hy = shaftTop + shaftLength;
+            ctx.beginPath();
+            ctx.moveTo(hx, hy + headSize);      // 꼭짓점(아래)
+            ctx.lineTo(x + Math.floor(s * 0.2), hy);
+            ctx.lineTo(x + s - Math.floor(s * 0.2), hy);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        ctx.restore();
     }
 
     function drawOverlay(text, color = '#ffffff') {
@@ -252,18 +559,34 @@
 
     // ====== 입력 ======
     window.addEventListener('keydown', (e) => {
-        e.preventDefault();
-        switch (e.key) {
-            case 'ArrowUp':    if (dir.y !== 1)  nextDir = { x: 0, y: -1 }; break;
-            case 'ArrowDown':  if (dir.y !== -1) nextDir = { x: 0, y: 1 };  break;
-            case 'ArrowLeft':  if (dir.x !== 1)  nextDir = { x: -1, y: 0 }; break;
-            case 'ArrowRight': if (dir.x !== -1) nextDir = { x: 1, y: 0 };  break;
-            case ' ':
+        const code = e.code; // 물리적 키 위치 기준 (레이아웃/한영 전환 무관)
+        switch (code) {
+            case 'ArrowUp':
+            case 'KeyW':
+                if (dir.y !== 1)  nextDir = { x: 0, y: -1 };
+                e.preventDefault();
+                break;
+            case 'ArrowDown':
+            case 'KeyS':
+                if (dir.y !== -1) nextDir = { x: 0, y: 1 };
+                e.preventDefault();
+                break;
+            case 'ArrowLeft':
+            case 'KeyA':
+                if (dir.x !== 1)  nextDir = { x: -1, y: 0 };
+                e.preventDefault();
+                break;
+            case 'ArrowRight':
+            case 'KeyD':
+                if (dir.x !== -1) nextDir = { x: 1, y: 0 };
+                e.preventDefault();
+                break;
+            case 'Space':
                 e.preventDefault();
                 running ? stopLoop() : startLoop();
                 break;
-            case 'r':
-            case 'R':
+            case 'KeyR':
+                e.preventDefault();
                 resetGame();
                 break;
         }
@@ -276,9 +599,24 @@
         if (running) startLoop(); // 즉시 반영
     });
 
+    timeSel.addEventListener('change', () => {
+        timeLimitSec = parseInt(timeSel.value, 10);
+        remainingSec = timeLimitSec > 0 ? timeLimitSec : 0;
+        updateHud();
+        // 플레이 중이면 타이머 즉시 반영
+        if (running) {
+            if (timeLimitSec > 0) startTimer(); else stopTimer();
+        } else {
+            stopTimer();
+        }
+        // 제한 시간 아이템 스폰/제거 즉시 반영
+        placeTimeItems();
+        draw();
+    });
+
     // ====== 시작 ======
     initGame();
-    startLoop();
+    // startLoop();
     canvas.focus();
 </script>
 

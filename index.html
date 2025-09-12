@@ -5,7 +5,7 @@
     <title>km-simple-game</title>
     <link rel="stylesheet" href="./src/bootstrap-5.3.7/dist/css/bootstrap.min.css">
     <script src="./src/bootstrap-5.3.7/dist/js/bootstrap.bundle.min.js"></script>
-
+    <script src="./src/js/app.js" defer></script>
 </head>
 <body>
   <!-- Bootstrap Navbar -->
@@ -19,7 +19,10 @@
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav ms-auto">
           <li class="nav-item">
-            <a class="nav-link" href="./view/game/worm.html" target="gameFrame">지렁이게임</a>
+            <a class="nav-link" href="./worm.html" target="gameFrame">지렁이게임</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="./spaceDodge.html" target="gameFrame">스페이스도odge</a>
           </li>
         </ul>
       </div>
@@ -29,6 +32,7 @@
   <!-- Container with iframe for the worm game -->
   <div>
     <iframe
+      id="gameFrame"
       name="gameFrame"
       src="./worm.html"
       style="width: 100vw; height: calc(100vh - 100px); border: 1px solid #dee2e6; border-radius: 0.25rem;"

@@ -14,6 +14,12 @@
       --btn-vw: 18vw;
       --btn-max: 110px;
     }
+    /* iframe 내에서 작아지는 문제를 방지하기 위한 임베디드 스케일 업 */
+    body.embedded {
+      --btn-min: 80px;
+      --btn-vw: 28vw;
+      --btn-max: 160px;
+    }
     /* ===== UI Grid Overlay ===== */
     .ui-grid {
       position: fixed;
@@ -104,6 +110,9 @@
       font-size: clamp(14px, 4.2vw, 20px);
       padding: .5em;
     }
+    body.embedded .control-bar button {
+      font-size: clamp(16px, 5vw, 22px);
+    }
     .control-bar .dpad button:active,
     .control-bar .actions button:active { background: rgba(20,80,110,.8); border-color: #8fd3ff; }
     .control-bar .dpad .empty { visibility: hidden; }
@@ -172,7 +181,7 @@
           stroke-linecap="round"
           stroke-linejoin="round"
         >
-          <use href="src/svg/pause.svg" />
+          <use href="./src/svg/pause.svg" />
         </svg>
 
        버튼, 스페이스  </p>
@@ -186,7 +195,7 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <use href="src/svg/play.svg" />
+        <use href="./src/svg/play.svg" />
       </svg>
         버튼, R </p>
     </div>
@@ -204,7 +213,7 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <use href="src/svg/minus-circle.svg" />
+        <use href="./src/svg/minus-circle.svg" />
       </svg></button>
       <button id="viewUp" aria-label="look up">▲</button>
       <button id="viewIn" aria-label="zoom in">
@@ -217,7 +226,7 @@
           stroke-linecap="round"
           stroke-linejoin="round"
         >
-          <use href="src/svg/plus-circle.svg" />
+          <use href="./src/svg/plus-circle.svg" />
         </svg>
       </button>
       <button id="viewLeft" aria-label="look left">◀</button>
@@ -231,7 +240,7 @@
           stroke-linecap="round"
           stroke-linejoin="round"
         >
-          <use href="src/svg/eye.svg" />
+          <use href="./src/svg/eye.svg" />
         </svg>
       </button>
       <button id="viewRight" aria-label="look right">▶</button>
@@ -249,7 +258,7 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <use href="src/svg/play.svg" />
+        <use href="./src/svg/play.svg" />
       </svg>
 </button>
       <button id="pauseBtn" type="button" aria-label="pause"> <svg
@@ -261,7 +270,7 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <use href="src/svg/pause.svg" />
+        <use href="./src/svg/pause.svg" />
       </svg></button>
       <button id="autoFireBtn" type="button" aria-pressed="false" aria-label="auto">AUTO</button>
     </div>

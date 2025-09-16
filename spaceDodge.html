@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <title>Space Dodge - Three.js</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
   <style>
     html, body { height: 100%; margin: 0; background: #000; color: #e7f0ff; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     /* 기본 글자 크기를 반응형으로 */
@@ -33,6 +35,7 @@
         "."
         "controls";
       pointer-events: none; /* 기본 차단, 내부 컨트롤에서만 허용 */
+      z-index: 10; /* 캔버스 위에 오도록 */
     }
 
     #hud {
@@ -59,6 +62,14 @@
       justify-self: end;
       margin: 10px;
       pointer-events: auto;
+      display: flex; align-items: center; gap: 10px; width: 100%; justify-content: flex-end;
+    }
+    #hint .fs-btn {
+      pointer-events: auto;
+      background: transparent; color: #e7f0ff; border: 1px solid rgba(143,211,255,.6);
+      border-radius: 12px; padding: 10px 16px; font-weight: 800;
+      font-size: clamp(18px, 3.8vw, 28px);
+      box-shadow: 0 6px 16px rgba(0,0,0,.35);
     }
     #centerMsg {
       grid-area: centerMsg;
@@ -70,6 +81,9 @@
       box-shadow: 0 10px 30px rgba(0,0,0,.4);
 
     }
+    /* iOS 등에서 전체화면 대체 모드 */
+    body.pseudo-fullscreen { height: 100vh; overflow: hidden; }
+    body.pseudo-fullscreen canvas { position: fixed !important; inset: 0; width: 100vw !important; height: 100vh !important; z-index: 0; }
     #centerMsg h1 { margin: 0 0 8px; font-size: clamp(22px, 4vw, 36px); }
     #centerMsg p { 
       margin: 6px 0; opacity: .9;
@@ -129,22 +143,22 @@
       }
     
 
-    /* 모바일(터치) 환경에서는 안내문 감춤 */
-    @media (hover: none) and (pointer: coarse) {
+    /* 모바일에서도 전체화면 버튼이 보이도록 #hint는 숨기지 않음 */
+    /* @media (hover: none) and (pointer: coarse) {
       #hint { display: none; }
-    }
+    } */
 
     @media (max-width: 420px) {
       #hud { padding: 8px 10px; }
       #hint { padding: 8px 10px; }
       .ui-grid {
-        grid-template-columns: repeat(1, auto);
+        grid-template-columns: repeat(3, auto);
         grid-template-rows: repeat(4, 25vh);
         grid-template-areas:
-          "hud"
-          "centerMsg"
-          "."
-          "controls";
+          "hud . hint"
+          "centerMsg centerMsg centerMsg"
+          ". . ."
+          "controls controls controls";
       }
 
     }
@@ -154,49 +168,26 @@
 <body>
   <div class="ui-grid">
   <div id="hud">
-    <div>
-      <div class="line">점수: <span id="score">0</span></div>
-      <div class="line">최고점수: <span id="best">0</span></div>
-      <div class="line">속도: <span id="speed">1.0</span>x</div>
+    <div class="hud-bar">
+      <div class="hud-left">
+        <div class="line">점수: <span id="score">0</span></div>
+        <div class="line">최고점수: <span id="best">0</span></div>
+        <div class="line">속도: <span id="speed">1.0</span>x</div>
+      </div>
     </div>
   </div>
   <div id="hint">
     <div>
-    조작: ←/→ 또는 A/D 이동 · F: 발사<br/>
-    스페이스: 일시정지/재개 · R: 재시작 · Shift+방향키/마우스: 시야 조정<br/>
-    모바일: 화면 좌/우 터치 이동 · 오토 발사 버튼 · 하단 화살표로 시야 조작
+      <button id="fsBtn" class="fs-btn" type="button" aria-label="fullscreen" title="전체 화면"> ⛶ </button>
     </div>
   </div>
   <div id="centerMsg">
     <div>
       <h1>Space Dodge</h1>
       <p>이동 : 좌우 터치, ←/→ 또는 A/D </p>
-      <p>일시정지/시작 :  
-        <svg
-          width="24"
-          height="24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <use href="./src/svg/pause.svg" />
-        </svg>
-
-       버튼, 스페이스  </p>
+      <p>일시정지/시작 :  ⏸️ 버튼, 스페이스  </p>
       <p>재시작 : 
-        <svg
-        width="24"
-        height="24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <use href="./src/svg/play.svg" />
-      </svg>
+        ▶️
         버튼, R </p>
     </div>
   </div>
@@ -204,74 +195,19 @@
   <!-- 하단 컨트롤: 십자(D-Pad) + 오른쪽 액션(Start/Pause/AUTO) -->
   <div class="control-bar" aria-label="모바일 컨트롤">
     <div class="dpad" aria-label="시야 조작">
-      <button id="viewOut" aria-label="zoom out"><svg
-        width="24"
-        height="24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <use href="./src/svg/minus-circle.svg" />
-      </svg></button>
+      <button id="viewOut" aria-label="zoom out">➖</button>
       <button id="viewUp" aria-label="look up">▲</button>
-      <button id="viewIn" aria-label="zoom in">
-        <svg
-          width="24"
-          height="24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <use href="./src/svg/plus-circle.svg" />
-        </svg>
-      </button>
+      <button id="viewIn" aria-label="zoom in">➕</button>
       <button id="viewLeft" aria-label="look left">◀</button>
-      <button id="viewOrigin" aria-label="origin">
-        <svg
-          width="24"
-          height="24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <use href="./src/svg/eye.svg" />
-        </svg>
-      </button>
+      <button id="viewOrigin" aria-label="origin">◉</button>
       <button id="viewRight" aria-label="look right">▶</button>
       <button class="empty" tabindex="-1" aria-hidden="true"></button>
       <button id="viewDown" aria-label="look down">▼</button>
       <button class="empty" tabindex="-1" aria-hidden="true"></button>
     </div>
     <div class="actions">
-      <button id="startBtn" type="button" aria-label="start">        <svg
-        width="24"
-        height="24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <use href="./src/svg/play.svg" />
-      </svg>
-</button>
-      <button id="pauseBtn" type="button" aria-label="pause"> <svg
-        width="24"
-        height="24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <use href="./src/svg/pause.svg" />
-      </svg></button>
+      <button id="startBtn" type="button" aria-label="start"> ▶ </button>
+      <button id="pauseBtn" type="button" aria-label="pause"> ⏸ </button>
       <button id="autoFireBtn" type="button" aria-pressed="false" aria-label="auto">AUTO</button>
     </div>
   </div>
@@ -543,32 +479,56 @@
       if (e.code === "ArrowRight" || e.code === "KeyD") input.right = false;
     });
 
-    // 터치로 좌우 이동 (화면 중앙 기준)
-    function setTouchMovement(x) {
+    // 터치로 좌우 이동: 화면 어디서든 스와이프 방향으로 이동
+    // - 손가락이 왼쪽으로 이동하면 왼쪽, 오른쪽으로 이동하면 오른쪽
+    // - 손가락이 거의 움직이지 않을 때는 초기 터치 지점의 좌/우 반 화면 기준
+    let activeTouchId = null;
+    let lastTouchX = null;
+    const SWIPE_THRESHOLD = 6; // px: 너무 작은 흔들림은 무시
+
+    function applyHalfScreenDirection(x) {
       const mid = window.innerWidth / 2;
       input.left = x < mid;
       input.right = x >= mid;
     }
+    function setDirectionByDelta(dx) {
+      if (dx > SWIPE_THRESHOLD) { input.left = false; input.right = true; return true; }
+      if (dx < -SWIPE_THRESHOLD) { input.left = true; input.right = false; return true; }
+      return false;
+    }
     window.addEventListener("touchstart", (e) => {
-      // 컨트롤바 영역 터치는 이동 입력 무시
-      if (e.target && (e.target.closest && e.target.closest('.control-bar'))) return;
+      if (e.target && (e.target.closest && (e.target.closest('.control-bar') || e.target.closest('#hud') || e.target.closest('#hint')))) return;
       if (e.touches && e.touches.length > 0) {
-        setTouchMovement(e.touches[0].clientX);
+        const t = e.touches[0];
+        activeTouchId = t.identifier;
+        lastTouchX = t.clientX;
+        applyHalfScreenDirection(lastTouchX);
       }
       e.preventDefault();
     }, { passive: false });
     window.addEventListener("touchmove", (e) => {
-      if (e.target && (e.target.closest && e.target.closest('.control-bar'))) return;
-      if (e.touches && e.touches.length > 0) {
-        setTouchMovement(e.touches[0].clientX);
+      if (e.target && (e.target.closest && (e.target.closest('.control-bar') || e.target.closest('#hud') || e.target.closest('#hint')))) return;
+      if (!e.touches || e.touches.length === 0) return;
+      let t = null;
+      for (let i = 0; i < e.touches.length; i++) {
+        if (activeTouchId === null || e.touches[i].identifier === activeTouchId) { t = e.touches[i]; break; }
       }
+      if (!t) t = e.touches[0];
+      if (lastTouchX == null) lastTouchX = t.clientX;
+      const dx = t.clientX - lastTouchX;
+      // 스와이프 방향이 명확하면 그 방향을 우선
+      if (!setDirectionByDelta(dx)) {
+        // 거의 움직이지 않으면 반 화면 기준 유지
+        applyHalfScreenDirection(t.clientX);
+      }
+      lastTouchX = t.clientX;
       e.preventDefault();
     }, { passive: false });
     function clearTouchMovement() {
-      input.left = false; input.right = false;
+      input.left = false; input.right = false; activeTouchId = null; lastTouchX = null;
     }
-    window.addEventListener("touchend", () => { clearTouchMovement(); }, { passive: true });
-    window.addEventListener("touchcancel", () => { clearTouchMovement(); }, { passive: true });
+    window.addEventListener("touchend", (e) => { clearTouchMovement(); }, { passive: true });
+    window.addEventListener("touchcancel", (e) => { clearTouchMovement(); }, { passive: true });
 
     // 마우스 드래그로 카메라 회전
     const mouse = { dragging: false, lastX: 0, lastY: 0 };
@@ -653,16 +613,72 @@
     // 시작/정지 버튼
     const $startBtn = document.getElementById('startBtn');
     const $pauseBtn = document.getElementById('pauseBtn');
-    $startBtn.addEventListener('click', () => {
+    $startBtn.addEventListener('click', async () => {
       if (isDead) restart();
       isRunning = true;
       showCenter(false);
+      // Try entering fullscreen on first user gesture (mobile policy)
+      if (!isFullscreen()) {
+        await enterFullscreen();
+        if (screen.orientation && screen.orientation.lock) {
+          try { await screen.orientation.lock('landscape'); } catch (e) { /* ignore */ }
+        }
+      }
     });
     $pauseBtn.addEventListener('click', () => {
       if (isDead) return;
       isRunning = false;
       showCenter(true, '일시정지', '시작 버튼으로 재개');
     });
+
+    // 전체 화면 토글
+    const $fsBtn = document.getElementById('fsBtn');
+    function isNativeFullscreen() {
+      return document.fullscreenElement || document.webkitFullscreenElement;
+    }
+    function isPseudoFullscreen() {
+      return document.body.classList.contains('pseudo-fullscreen');
+    }
+    function isFullscreen() { return !!(isNativeFullscreen() || isPseudoFullscreen()); }
+    function updateFsBtn() {
+      if (!$fsBtn) return;
+      const on = !!isFullscreen();
+      $fsBtn.textContent = on ? ' 🗗 ' : ' ⛶ ';
+      $fsBtn.setAttribute('aria-pressed', String(on));
+    }
+    async function enterFullscreen() {
+      const el = document.documentElement; // 페이지 전체
+      try {
+        if (el.requestFullscreen) { await el.requestFullscreen(); }
+        else if (el.webkitRequestFullscreen) { await el.webkitRequestFullscreen(); }
+        else if (document.body.requestFullscreen) { await document.body.requestFullscreen(); }
+        else {
+          // Fallback: pseudo-fullscreen
+          document.body.classList.add('pseudo-fullscreen');
+        }
+      } catch (e) {
+        // Fallback on error
+        document.body.classList.add('pseudo-fullscreen');
+      }
+      updateFsBtn();
+    }
+    async function exitFullscreen() {
+      try {
+        if (document.exitFullscreen) { await document.exitFullscreen(); }
+        else if (document.webkitExitFullscreen) { await document.webkitExitFullscreen(); }
+      } catch (e) { /* ignore */ }
+      // Always clear pseudo mode
+      document.body.classList.remove('pseudo-fullscreen');
+      updateFsBtn();
+    }
+    if ($fsBtn) {
+      $fsBtn.addEventListener('click', () => {
+        if (isFullscreen()) exitFullscreen(); else enterFullscreen();
+      });
+      document.addEventListener('fullscreenchange', updateFsBtn);
+      document.addEventListener('webkitfullscreenchange', updateFsBtn);
+      updateFsBtn();
+    }
 
     function toggleRun() {
       if (isDead) return;

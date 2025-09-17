@@ -398,6 +398,52 @@
     // 스폰 레인(좌표)
     const LANES = [-6, -3, 0, 3, 6];
 
+    // 미사일 아이템
+    const itemGeo = new THREE.OctahedronGeometry(1.0, 0);
+    const itemMat = new THREE.MeshStandardMaterial({ 
+      color: 0x4dffb8, 
+      emissive: 0x00cc77, 
+      emissiveIntensity: 1.2, 
+      metalness: 0.2, 
+      roughness: 0.3 
+    });
+    const MISSILE_ITEM_POOL_SIZE = 40;
+    const missileItems = [];
+    const missileItemSize = new THREE.Vector3(1.4, 1.4, 1.4);
+    const MISSILE_ITEM_SPAWN_CHANCE = 0.1; // 적 생성 시 아이템이 나올 확률
+    function resetMissileItem(item) {
+      item.visible = false;
+      item.position.set(0, item.userData.originalY, -200);
+      item.userData.bobOffset = 0;
+    }
+
+    for (let i = 0; i < MISSILE_ITEM_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(itemGeo, itemMat.clone());
+      mesh.castShadow = true;
+      // 각 아이템에 별도 애니메이션 속도를 저장해두고 풀링한다.
+      mesh.userData = {
+        rotationSpeed: 0,
+        bobOffset: 0,
+        bobSpeed: 0,
+        originalY: 2.5
+      };
+      resetMissileItem(mesh);
+      scene.add(mesh);
+      missileItems.push(mesh);
+    }
+
+    function spawnMissileItem(x, z) {
+      const item = missileItems.find(o => !o.visible);
+      if (!item) return;
+      // 선택된 아이템을 해당 레인 위치에 재배치하고 애니메이션 파라미터를 갱신한다.
+      item.visible = true;
+      item.position.set(x, item.userData.originalY, z);
+      item.rotation.set(0, Math.random() * Math.PI * 2, 0);
+      item.userData.rotationSpeed = 0.012 + Math.random() * 0.015;
+      item.userData.bobOffset = Math.random() * Math.PI * 2;
+      item.userData.bobSpeed = 0.02 + Math.random() * 0.015;
+    }
+
     // ----- 상태 -----
     let isRunning = false;
     let isDead = false;
@@ -430,6 +476,8 @@
       scene.add(b);
       bullets.push(b);
     }
+    const bulletSize = new THREE.Vector3(0.4, 0.4, 1.2);
+    const enemyHitbox = new THREE.Vector3();
     let fireCooldown = 0;
     const fireInterval = 180; // ms
     // 카메라 제어 상태
@@ -477,53 +525,75 @@
       if (e.code === "ArrowRight" || e.code === "KeyD") input.right = false;
     });
 
-    // 터치로 좌우 이동: 화면 어디서든 스와이프 방향으로 이동
-    // - 손가락이 왼쪽으로 이동하면 왼쪽, 오른쪽으로 이동하면 오른쪽
-    // - 손가락이 거의 움직이지 않을 때는 초기 터치 지점의 좌/우 반 화면 기준
+    // 터치로 좌우 이동: 터치한 위치를 기준으로 드래그 방향에 따라 이동
+    // - 처음 터치한 지점에서 왼쪽으로 드래그: 왼쪽으로 이동
+    // - 처음 터치한 지점에서 오른쪽으로 드래그: 오른쪽으로 이동
+    // - 터치 해제: 정지
     let activeTouchId = null;
-    let lastTouchX = null;
-    const SWIPE_THRESHOLD = 6; // px: 너무 작은 흔들림은 무시
+    let initialTouchX = null;
+    const MOVE_THRESHOLD = 10; // 픽셀 단위의 이동 임계값
 
-    function applyHalfScreenDirection(x) {
-      const mid = window.innerWidth / 2;
-      input.left = x < mid;
-      input.right = x >= mid;
+    function updateMovementFromTouch(currentX) {
+      if (initialTouchX === null) return;
+      
+      const dx = currentX - initialTouchX;
+      if (dx > MOVE_THRESHOLD) {
+        // 오른쪽으로 드래그 중: 오른쪽으로 이동
+        input.left = false;
+        input.right = true;
+      } else if (dx < -MOVE_THRESHOLD) {
+        // 왼쪽으로 드래그 중: 왼쪽으로 이동
+        input.left = true;
+        input.right = false;
+      } else {
+        // 임계값 내에서는 정지
+        input.left = false;
+        input.right = false;
+      }
     }
-    function setDirectionByDelta(dx) {
-      if (dx > SWIPE_THRESHOLD) { input.left = false; input.right = true; return true; }
-      if (dx < -SWIPE_THRESHOLD) { input.left = true; input.right = false; return true; }
-      return false;
-    }
+
     window.addEventListener("touchstart", (e) => {
+      // 컨트롤 버튼이나 HUD를 터치한 경우는 무시
       if (e.target && (e.target.closest && (e.target.closest('.control-bar') || e.target.closest('#hud') || e.target.closest('#hint')))) return;
+      
       if (e.touches && e.touches.length > 0) {
-        const t = e.touches[0];
-        activeTouchId = t.identifier;
-        lastTouchX = t.clientX;
-        applyHalfScreenDirection(lastTouchX);
+        const touch = e.touches[0];
+        activeTouchId = touch.identifier;
+        initialTouchX = touch.clientX;
+        // 초기 터치 시에는 이동하지 않음
+        input.left = false;
+        input.right = false;
       }
       e.preventDefault();
     }, { passive: false });
+
     window.addEventListener("touchmove", (e) => {
+      // 컨트롤 버튼이나 HUD를 터치한 경우는 무시
       if (e.target && (e.target.closest && (e.target.closest('.control-bar') || e.target.closest('#hud') || e.target.closest('#hint')))) return;
-      if (!e.touches || e.touches.length === 0) return;
-      let t = null;
+      
+      // 현재 활성화된 터치 찾기
+      let touch = null;
       for (let i = 0; i < e.touches.length; i++) {
-        if (activeTouchId === null || e.touches[i].identifier === activeTouchId) { t = e.touches[i]; break; }
+        if (e.touches[i].identifier === activeTouchId) {
+          touch = e.touches[i];
+          break;
+        }
       }
-      if (!t) t = e.touches[0];
-      if (lastTouchX == null) lastTouchX = t.clientX;
-      const dx = t.clientX - lastTouchX;
-      // 스와이프 방향이 명확하면 그 방향을 우선
-      if (!setDirectionByDelta(dx)) {
-        // 거의 움직이지 않으면 반 화면 기준 유지
-        applyHalfScreenDirection(t.clientX);
-      }
-      lastTouchX = t.clientX;
+      
+      // 활성화된 터치가 없으면 첫 번째 터치 사용
+      if (!touch) touch = e.touches[0];
+      
+      // 현재 터치 위치에 따라 이동 방향 업데이트
+      updateMovementFromTouch(touch.clientX);
+      
       e.preventDefault();
     }, { passive: false });
+    
     function clearTouchMovement() {
-      input.left = false; input.right = false; activeTouchId = null; lastTouchX = null;
+      input.left = false;
+      input.right = false;
+      activeTouchId = null;
+      initialTouchX = null;
     }
     window.addEventListener("touchend", (e) => { clearTouchMovement(); }, { passive: true });
     window.addEventListener("touchcancel", (e) => { clearTouchMovement(); }, { passive: true });
@@ -719,6 +789,10 @@
         b.visible = false;
         b.position.z = 0;
       }
+      for (const item of missileItems) {
+        // 재시작 시에는 모든 아이템을 비활성화하고 오프스크린에 숨긴다.
+        resetMissileItem(item);
+      }
       fireCooldown = 0;
       // 플레이어 위치
       player.position.x = 0;
@@ -754,6 +828,12 @@
       }
       e.position.set(laneX, 2.5, -280 - Math.random() * 60);
       e.userData.passed = false;
+      // 블록이 생성될 때 일정 확률로 같은 레인에 아이템을 미리 배치한다.
+      // 적을 파괴하지 않아도 플레이어가 지나가며 아이템을 줍도록 전방에 띄워둔다.
+      if (Math.random() < MISSILE_ITEM_SPAWN_CHANCE) {
+        const itemZ = e.position.z - 16 - Math.random() * 14;
+        spawnMissileItem(laneX, itemZ);
+      }
     }
 
     // 발사 유틸
@@ -785,12 +865,15 @@
     function tick(now) {
       const dt = Math.min(50, now - lastTime); // ms
       lastTime = now;
+      const frameScale = dt / 16.67;
+      const isActive = isRunning && !isDead;
+      const travelSpeed = isActive ? (baseSpeed + speedScale * 0.4) * frameScale : 0;
 
       // 별 이동(카메라 쪽으로)
       const starPos = stars.geometry.attributes.position;
       const depth = stars.userData.depth;
       for (let i = 0; i < starPos.count; i++) {
-        const z = starPos.getZ(i) + (0.05 + speedScale * 0.02) * (dt / 16.67);
+        const z = starPos.getZ(i) + (0.05 + speedScale * 0.02) * frameScale;
         if (z > 10) {
           starPos.setZ(i, -Math.random() * depth - 100);
           starPos.setX(i, (Math.random() - 0.5) * 200);
@@ -801,7 +884,7 @@
       starPos.needsUpdate = true;
 
       // 입력에 따른 플레이어 좌우 이동
-      if (isRunning && !isDead) {
+      if (isActive) {
         const move = 0.02 * dt * 0.6 * (1 + (speedScale - 1) * 0.2);
         if (input.left)  player.position.x -= move;
         if (input.right) player.position.x += move;
@@ -813,7 +896,7 @@
       {
         const maxRoll = 0.28; // 최대 기울기(라디안)
         const dir = (input.left ? 1 : 0) + (input.right ? -1 : 0); // left:+1, right:-1
-        const targetRoll = (isRunning && !isDead) ? maxRoll * dir : 0;
+        const targetRoll = isActive ? maxRoll * dir : 0;
         // 부드럽게 보간
         playerRoll += (targetRoll - playerRoll) * 0.12;
         player.rotation.z = playerRoll;
@@ -836,22 +919,21 @@
       if (fireCooldown > 0) fireCooldown = Math.max(0, fireCooldown - dt);
 
       // 오토 발사
-      if (isRunning && !isDead && autoFireEnabled) {
+      if (isActive && autoFireEnabled) {
         tryFire();
       }
 
       // 총알 업데이트 및 적과의 충돌 처리
-      if (isRunning && !isDead) {
-        const bulletSize = new THREE.Vector3(0.4, 0.4, 1.2);
+      if (isActive) {
         for (const b of bullets) {
           if (!b.visible) continue;
-          b.position.z += b.userData.vz * (dt / 16.67);
+          b.position.z += b.userData.vz * frameScale;
           if (b.position.z < -350) { b.visible = false; continue; }
           // 적과 충돌 체크
           for (const e of enemies) {
             if (!e.visible) continue;
-            const enemySize = new THREE.Vector3(2.2, 2.2 * e.scale.y, 2.2);
-            if (aabbIntersect(b.position, bulletSize, e.position, enemySize)) {
+            enemyHitbox.set(2.2, 2.2 * e.scale.y, 2.2);
+            if (aabbIntersect(b.position, bulletSize, e.position, enemyHitbox)) {
               // 피격 처리
               b.visible = false;
               e.userData.hp = Math.max(0, (e.userData.hp || 1) - 1);
@@ -868,10 +950,35 @@
         }
       }
 
+      // 미사일 아이템 업데이트 및 플레이어 충돌 처리
+      if (isActive) {
+        for (const item of missileItems) {
+          if (!item.visible) continue;
+          // 천천히 회전시키며, 위아래로 흔들리도록 오프셋을 누적한다.
+          item.rotation.y += item.userData.rotationSpeed * frameScale;
+          item.userData.bobOffset += item.userData.bobSpeed * frameScale;
+          item.position.y = item.userData.originalY + Math.sin(item.userData.bobOffset) * 0.3;
+          // 아이템도 적과 같은 속도로 전방에서 플레이어쪽으로 이동한다.
+          item.position.z += travelSpeed;
+
+          if (aabbIntersect(player.position, playerSize, item.position, missileItemSize)) {
+            // 플레이어가 획득하면 점수 보상을 주고 곧바로 풀로 되돌린다.
+            resetMissileItem(item);
+            score += 5;
+            continue;
+          }
+
+          if (item.position.z > 40) {
+            // 화면을 지나친 아이템도 풀에 반환한다.
+            resetMissileItem(item);
+          }
+        }
+      }
+
       // 활주로 텍스처 스크롤(전진감) - 일시정지/사망 시 정지
-      if (runwayTex && isRunning && !isDead) {
+      if (runwayTex && isActive) {
         // 속도에 비례해서 더 빨리 스크롤 (약하게)
-        runwayTex.offset.y += (0.006 + speedScale * 0.003) * (dt / 16.67);
+        runwayTex.offset.y += (0.006 + speedScale * 0.003) * frameScale;
       }
 
       // 엔진 불꽃 애니메이션
@@ -885,13 +992,13 @@
       }
 
       // 적 이동/충돌/점수
-      if (isRunning && !isDead) {
-        const enemySpeed = (baseSpeed + speedScale * 0.4) * (dt / 16.67);
+      if (isActive) {
         for (const e of enemies) {
           if (!e.visible) continue;
-          e.position.z += enemySpeed; // 카메라 쪽으로
+          e.position.z += travelSpeed; // 카메라 쪽으로
           // 충돌 체크 (박스 적: Y축 스케일 반영)
-          if (aabbIntersect(player.position, playerSize, e.position, new THREE.Vector3(2.2, 2.2 * e.scale.y, 2.2))) {
+          enemyHitbox.set(2.2, 2.2 * e.scale.y, 2.2);
+          if (aabbIntersect(player.position, playerSize, e.position, enemyHitbox)) {
             isDead = true;
             isRunning = false;
             best = Math.max(best, Math.floor(score));
@@ -911,14 +1018,14 @@
           }
         }
         // 난이도 상승
-        speedScale += 0.0006 * (dt / 16.67);      // 천천히 가속
+        speedScale += 0.0006 * frameScale;      // 천천히 가속
         // 스폰 주기를 너무 짧아지지 않게 상향 조정
         spawnEvery = Math.max(320, 550 - speedScale * 45); // 최소 간격 상향, 기본 간격 증가
         updateHUD();
       }
 
       // 스폰 타이밍
-      if (isRunning && !isDead) {
+      if (isActive) {
         if (now - lastSpawn > spawnEvery) {
           lastSpawn = now;
           // 한 번에 1~2개 스폰으로 랜덤성

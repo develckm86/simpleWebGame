@@ -174,6 +174,8 @@
         <div class="line">점수: <span id="score">0</span></div>
         <div class="line">최고점수: <span id="best">0</span></div>
         <div class="line">속도: <span id="speed">1.0</span>x</div>
+        <div class="line">이동거리: <span id="distance">0.0</span></div>
+        <div class="line">한 번에 발사: <span id="missiles">1</span>발 (획득: <span id="missilesCollected">0</span>)</div>
       </div>
     </div>
   </div>
@@ -241,19 +243,212 @@
     function createStarfield(count = 1500, depth = 800) {
       const geom = new THREE.BufferGeometry();
       const positions = new Float32Array(count * 3);
+      const sizes = new Float32Array(count);
+      const colors = new Float32Array(count * 3);
+      const minComponent = 0xcc / 0xff; // 최소 밝기 (hex CC)
       for (let i = 0; i < count; i++) {
-        positions[i * 3 + 0] = (Math.random() - 0.5) * 200; // x
-        positions[i * 3 + 1] = Math.random() * 120 - 20;    // y
-        positions[i * 3 + 2] = -Math.random() * depth;      // z (카메라 뒤쪽)
+        const idx3 = i * 3;
+        positions[idx3 + 0] = (Math.random() - 0.5) * 200; // x
+        positions[idx3 + 1] = Math.random() * 120 - 20;    // y
+        positions[idx3 + 2] = -Math.random() * depth;      // z (카메라 뒤쪽)
+        sizes[i] = 1.8 + Math.random() * 2.2;               // 입자별 사이즈 (스크린 공간 기준)
+
+        let r = minComponent + Math.random() * (1 - minComponent);
+        let g = minComponent + Math.random() * (1 - minComponent);
+        let b = minComponent + Math.random() * (1 - minComponent);
+        const warmShift = Math.random() * 0.08;             // 살짝 따뜻한 색감 유지
+        r = Math.min(1, r + warmShift * 0.8);
+        g = Math.min(1, g + warmShift);
+        b = Math.max(minComponent, b - warmShift * 0.5);
+
+        colors[idx3 + 0] = r;
+        colors[idx3 + 1] = g;
+        colors[idx3 + 2] = b;
       }
       geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-      const mat = new THREE.PointsMaterial({ size: 0.8, color: 0x9ecbff });
+      geom.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+      geom.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
+
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uPixelRatio: { value: renderer.getPixelRatio() }
+        },
+        vertexShader: `
+          attribute float aSize;
+          attribute vec3 aColor;
+          uniform float uPixelRatio;
+          varying vec3 vColor;
+
+          void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            float scaledSize = aSize * uPixelRatio;
+            gl_PointSize = scaledSize * (300.0 / -mvPosition.z);
+            vColor = aColor;
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+
+          void main() {
+            float dist = length(gl_PointCoord - vec2(0.5));
+            if (dist > 0.5) discard;
+            float alpha = smoothstep(0.5, 0.0, dist);
+            gl_FragColor = vec4(vColor, alpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+
       const points = new THREE.Points(geom, mat);
       points.userData = { depth };
       return points;
     }
     const stars = createStarfield();
     scene.add(stars);
+
+    // ----- 사운드 -----
+    const audio = (() => {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        return { playFire() {}, playBreak() {}, playStart() {}, resume() {} };
+      }
+      let ctx = null;
+      let masterGain = null;
+      let noiseBuffer = null;
+
+      function ensureCtx() {
+        if (ctx) return ctx;
+        try {
+          ctx = new AudioCtx();
+          masterGain = ctx.createGain();
+          masterGain.gain.value = 0.5;
+          masterGain.connect(ctx.destination);
+        } catch (err) {
+          console.warn("Audio init failed", err);
+          ctx = null;
+        }
+        return ctx;
+      }
+
+      function ensureNoiseBuffer(duration = 1.0) {
+        const c = ensureCtx();
+        if (!c) return null;
+        if (noiseBuffer) return noiseBuffer;
+        const length = Math.ceil(c.sampleRate * duration);
+        noiseBuffer = c.createBuffer(1, length, c.sampleRate);
+        const data = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < length; i++) {
+          const fade = 1 - i / length;
+          data[i] = (Math.random() * 2 - 1) * fade;
+        }
+        return noiseBuffer;
+      }
+
+      function createEnv(total, opts = {}) {
+        const c = ensureCtx();
+        if (!c || !masterGain) return null;
+        const now = c.currentTime + 0.001;
+        const attack = opts.attack ?? 0.01;
+        const release = opts.release ?? 0.25;
+        const peak = opts.peak ?? 0.9;
+        const sustain = opts.sustain ?? 0.4;
+        const sustainTime = Math.max(0, total - attack - release);
+        const gain = c.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(peak, now + attack);
+        gain.gain.linearRampToValueAtTime(peak * sustain, now + attack + sustainTime);
+        gain.gain.linearRampToValueAtTime(0.0001, now + attack + sustainTime + release);
+        gain.connect(masterGain);
+        return { ctx: c, gain, start: now, stop: now + attack + sustainTime + release };
+      }
+
+      function playFire(burst = 1) {
+        const env = createEnv(0.22, {
+          attack: 0.006,
+          release: 0.18,
+          peak: Math.min(0.85, 0.35 + burst * 0.18),
+          sustain: 0.2
+        });
+        if (!env) return;
+        const { ctx: c, gain, start, stop } = env;
+        const osc = c.createOscillator();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(780, start);
+        osc.frequency.exponentialRampToValueAtTime(420, start + 0.16);
+        osc.connect(gain);
+        osc.start(start);
+        osc.stop(stop);
+      }
+
+      function playBreak() {
+        const env = createEnv(0.4, { attack: 0.004, release: 0.28, peak: 0.7, sustain: 0.15 });
+        if (!env) return;
+        const { ctx: c, gain, start, stop } = env;
+        const noiseBuf = ensureNoiseBuffer(0.5);
+        if (noiseBuf) {
+          const noise = c.createBufferSource();
+          noise.buffer = noiseBuf;
+          const filter = c.createBiquadFilter();
+          filter.type = "bandpass";
+          filter.frequency.setValueAtTime(280, start);
+          filter.Q.setValueAtTime(0.9, start);
+          noise.connect(filter);
+          filter.connect(gain);
+          noise.start(start);
+          noise.stop(stop);
+        }
+        const tone = c.createOscillator();
+        tone.type = "sawtooth";
+        tone.frequency.setValueAtTime(220, start);
+        tone.frequency.exponentialRampToValueAtTime(120, stop);
+        tone.connect(gain);
+        tone.start(start);
+        tone.stop(stop);
+      }
+
+      function playStart() {
+        const env = createEnv(0.9, { attack: 0.02, release: 0.6, peak: 0.5, sustain: 0.25 });
+        if (!env) return;
+        const { ctx: c, gain, start, stop } = env;
+        const noiseBuf = ensureNoiseBuffer(1.0);
+        if (noiseBuf) {
+          const noise = c.createBufferSource();
+          noise.buffer = noiseBuf;
+          const filter = c.createBiquadFilter();
+          filter.type = "highpass";
+          filter.frequency.setValueAtTime(160, start);
+          filter.frequency.exponentialRampToValueAtTime(980, start + 0.4);
+          filter.Q.setValueAtTime(0.7, start);
+          noise.connect(filter);
+          filter.connect(gain);
+          noise.start(start);
+          noise.stop(stop);
+        }
+        const tone = c.createOscillator();
+        tone.type = "sine";
+        tone.frequency.setValueAtTime(220, start);
+        tone.frequency.exponentialRampToValueAtTime(620, start + 0.5);
+        tone.frequency.linearRampToValueAtTime(440, stop);
+        tone.connect(gain);
+        tone.start(start);
+        tone.stop(stop);
+      }
+
+      async function resume() {
+        const c = ensureCtx();
+        if (!c) return;
+        if (c.state === "suspended") {
+          try { await c.resume(); } catch (err) { /* ignore */ }
+        }
+      }
+
+      return { playFire, playBreak, playStart, resume };
+    })();
+
+    window.addEventListener("pointerdown", () => { audio.resume(); }, { passive: true });
 
     // 바닥 텍스처(캔버스로 생성하는 그리드/활주로 라인)
     function createRunwayTexture() {
@@ -302,7 +497,13 @@
 
     // ----- 플레이어 -----
     const playerSize = new THREE.Vector3(2.2, 2.2, 2.2);
-    const playerMat = new THREE.MeshStandardMaterial({ color: 0x68d5ff, metalness: 0.25, roughness: 0.45, emissive: 0x0a2a3a, emissiveIntensity: 0.25 });
+    const playerMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0.22,
+      roughness: 0.32,
+      emissive: 0x1b1f36,
+      emissiveIntensity: 0.12
+    });
     const player = new THREE.Group();
     // 코(노즈)
     const nose = new THREE.Mesh(new THREE.ConeGeometry(1.0, 2.2, 10), playerMat);
@@ -315,7 +516,13 @@
     body.position.set(0, 0, 0.7);
     body.castShadow = true;
     // 날개 (좌우가 끝으로 갈수록 좁아지는 트라페조이드 형태)
-    const wingMat = new THREE.MeshStandardMaterial({ color: 0x4ac8ff, metalness: 0.2, roughness: 0.5 });
+    const wingMat = new THREE.MeshStandardMaterial({
+      color: 0xe5ecff,
+      metalness: 0.18,
+      roughness: 0.42,
+      emissive: 0x171c2d,
+      emissiveIntensity: 0.08
+    });
     function makeTaperedWing(side = 1) {
       // side: +1 오른쪽, -1 왼쪽
       const geo = new THREE.BoxGeometry(1.2, 0.14, 1.3); // 더 넓고 두꺼운 날개 (콩코드 느낌)
@@ -398,6 +605,90 @@
     // 스폰 레인(좌표)
     const LANES = [-6, -3, 0, 3, 6];
 
+    // 적 유형 정의(5종): 체력, 크기, 재질 차이로 다양화
+    const ENEMY_TYPES = [
+      { hp: 2, scale: 1.0, color: 0xff7699, emissive: 0x6c1230, emissiveIntensity: 0.5, score: 14 },
+      { hp: 4, scale: 1.5, color: 0xff9a5b, emissive: 0x6a2a05, emissiveIntensity: 0.45, score: 18 },
+      { hp: 6, scale: 2.0, color: 0xffd360, emissive: 0x5f2f00, emissiveIntensity: 0.4, score: 24 },
+      { hp: 8, scale: 2.5, color: 0x92d2ff, emissive: 0x0b3460, emissiveIntensity: 0.48, score: 30 },
+      { hp: 10, scale: 3.0, color: 0xc1a6ff, emissive: 0x2d0f6f, emissiveIntensity: 0.52, score: 38 }
+    ];
+
+    function applyEnemyType(mesh, def) {
+      const heightMul = def.scale * (0.9 + Math.random() * 0.7);
+      mesh.scale.set(def.scale, heightMul, def.scale);
+      mesh.material.color.setHex(def.color);
+      mesh.material.emissive.setHex(def.emissive);
+      mesh.material.emissiveIntensity = def.emissiveIntensity;
+      mesh.userData.maxHp = def.hp;
+      mesh.userData.hp = def.hp;
+      mesh.userData.type = def;
+      mesh.userData.damagePhase = 0;
+      mesh.userData.hitbox = new THREE.Vector3(2.2 * def.scale, 2.2 * heightMul, 2.2 * def.scale);
+      mesh.userData.killScore = def.score;
+    }
+
+    function updateEnemyDamageVisual(mesh) {
+      const ratio = Math.max(0, mesh.userData.hp / mesh.userData.maxHp);
+      const base = mesh.userData.type;
+      const intensity = base.emissiveIntensity + (1 - ratio) * 0.35;
+      mesh.material.emissiveIntensity = intensity;
+      mesh.userData.damagePhase = 4; // 짧은 타격 후광을 위해 플래그
+    }
+
+    // 블록 파편 이펙트 풀
+    const DEBRIS_POOL_SIZE = 120;
+    const debrisGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    const debrisPieces = [];
+    for (let i = 0; i < DEBRIS_POOL_SIZE; i++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffaaaa,
+        metalness: 0.15,
+        roughness: 0.65,
+        emissive: 0x000000,
+        transparent: true,
+        opacity: 0
+      });
+      const chunk = new THREE.Mesh(debrisGeo, mat);
+      chunk.visible = false;
+      chunk.castShadow = true;
+      chunk.userData = {
+        velocity: new THREE.Vector3(),
+        spin: new THREE.Vector3(),
+        life: 0,
+        maxLife: 900
+      };
+      scene.add(chunk);
+      debrisPieces.push(chunk);
+    }
+
+    function spawnDebrisBurst(position, typeDef) {
+      let spawned = 0;
+      for (const chunk of debrisPieces) {
+        if (chunk.visible) continue;
+        chunk.visible = true;
+        chunk.position.copy(position);
+        chunk.position.x += (Math.random() - 0.5) * 1.2;
+        chunk.position.y += (Math.random() - 0.5) * 1.0;
+        chunk.position.z += (Math.random() - 0.5) * 1.2;
+        chunk.material.color.setHex(typeDef.color);
+        chunk.material.opacity = 0.95;
+        chunk.userData.velocity.set(
+          (Math.random() - 0.5) * 0.3,
+          Math.random() * 0.4 + 0.18,
+          (Math.random() - 0.5) * 0.4
+        );
+        chunk.userData.spin.set(
+          (Math.random() - 0.5) * 0.2,
+          (Math.random() - 0.5) * 0.2,
+          (Math.random() - 0.5) * 0.2
+        );
+        chunk.userData.life = 0;
+        chunk.userData.maxLife = 900 + Math.random() * 400;
+        if (++spawned >= 12) break; // 한 번에 12조각까지만 사용
+      }
+    }
+
     // 미사일 아이템
     const itemGeo = new THREE.OctahedronGeometry(1.0, 0);
     const itemMat = new THREE.MeshStandardMaterial({ 
@@ -456,8 +747,11 @@
     let lastTime = performance.now();
     // 플레이어 기울기(롤) 상태
     let playerRoll = 0;       // z축 회전(좌우 기울기)
-    // 총알(미사일) 풀
-    const BULLET_POOL_SIZE = 40;
+    let missilesPerShot = 1;
+    let missilesCollected = 0;
+    const MISSILE_SPREAD = 0.85; // 동시에 발사될 때 좌우 간격
+   // 총알(미사일) 풀
+    const BULLET_POOL_SIZE = 120;
     const bulletGeo = new THREE.CylinderGeometry(0.18, 0.28, 1.2, 8);
     const bulletMat = new THREE.MeshStandardMaterial({ color: 0x9be8ff, emissive: 0x66ccff, emissiveIntensity: 1.8, metalness: 0.1, roughness: 0.3 });
     const bullets = [];
@@ -479,7 +773,17 @@
     const bulletSize = new THREE.Vector3(0.4, 0.4, 1.2);
     const enemyHitbox = new THREE.Vector3();
     let fireCooldown = 0;
-    const fireInterval = 180; // ms
+    const BASE_MISSILE_FIRE_INTERVAL = 150; // ms
+    let missileFireInterval = BASE_MISSILE_FIRE_INTERVAL;
+    window.gameConfig = Object.assign(window.gameConfig || {}, {
+      getMissileFireInterval: () => missileFireInterval,
+      setMissileFireInterval: (ms) => {
+        const next = Number(ms);
+        if (!Number.isFinite(next) || next <= 0) return missileFireInterval;
+        missileFireInterval = Math.max(40, next);
+        return missileFireInterval;
+      }
+    });
     // 카메라 제어 상태
     let camYaw = 0.0;           // 좌우 회전 (라디안)
     let camPitch = 0.28;        // 상하 (라디안, 위로 양수)
@@ -492,14 +796,19 @@
     const $score = document.getElementById("score");
     const $best = document.getElementById("best");
     const $speed = document.getElementById("speed");
+    const $missiles = document.getElementById("missiles");
+    const $missilesCollected = document.getElementById("missilesCollected");
     const $center = document.getElementById("centerMsg");
     $best.textContent = best.toString();
     showCenter(true);
+    updateHUD();
 
     // ----- 입력 -----
     const input = { left: false, right: false };
     let autoFireEnabled = false;
+    let fireHeld = false;
     window.addEventListener("keydown", (e) => {
+      audio.resume();
       // Shift + 방향키 => 카메라 조정
       if (e.shiftKey) {
         if (e.code === "ArrowLeft") { camYaw -= 0.08; e.preventDefault(); return; }
@@ -511,6 +820,7 @@
       if (e.code === "ArrowRight" || e.code === "KeyD") input.right = true;
       if (e.code === "KeyF") { // 발사
         e.preventDefault();
+        fireHeld = true;
         tryFire();
         return;
       }
@@ -523,6 +833,7 @@
     window.addEventListener("keyup", (e) => {
       if (e.code === "ArrowLeft" || e.code === "KeyA") input.left = false;
       if (e.code === "ArrowRight" || e.code === "KeyD") input.right = false;
+      if (e.code === "KeyF") fireHeld = false;
     });
 
     // 터치로 좌우 이동: 터치한 위치를 기준으로 드래그 방향에 따라 이동
@@ -553,9 +864,10 @@
     }
 
     window.addEventListener("touchstart", (e) => {
+      audio.resume();
       // 컨트롤 버튼이나 HUD를 터치한 경우는 무시
       if (e.target && (e.target.closest && (e.target.closest('.control-bar') || e.target.closest('#hud') || e.target.closest('#hint')))) return;
-      
+
       if (e.touches && e.touches.length > 0) {
         const touch = e.touches[0];
         activeTouchId = touch.identifier;
@@ -750,8 +1062,10 @@
 
     function toggleRun() {
       if (isDead) return;
-      isRunning = !isRunning;
+      const next = !isRunning;
+      isRunning = next;
       showCenter(!isRunning);
+      if (next) audio.playStart();
     }
 
     function showCenter(show, title, desc) {
@@ -793,7 +1107,16 @@
         // 재시작 시에는 모든 아이템을 비활성화하고 오프스크린에 숨긴다.
         resetMissileItem(item);
       }
+      for (const chunk of debrisPieces) {
+        chunk.visible = false;
+        chunk.material.opacity = 0;
+        chunk.userData.life = 0;
+      }
       fireCooldown = 0;
+      missilesPerShot = 1;
+      missilesCollected = 0;
+      fireHeld = false;
+      updateHUD();
       // 플레이어 위치
       player.position.x = 0;
       // 롤 초기화
@@ -808,24 +1131,8 @@
       if (!e) return;
       e.visible = true;
       const laneX = LANES[Math.floor(Math.random() * LANES.length)];
-      const sizeY = 1.8 + Math.random() * 2.2;   // 약간 다양한 높이
-      e.scale.set(1, sizeY / 2.2, 1);
-      // 타입 지정: 1타 격파(작고 붉은색) vs 3타 격파(크고 주황색)
-      if (Math.random() < 0.55) {
-        // 1타
-        e.userData.hp = 1;
-        e.material.color.setHex(0xff8ea0); // 더 밝은 코랄톤
-        e.material.emissive.setHex(0x5a0f12);
-        e.material.emissiveIntensity = 0.4;
-        // 기본 크기 유지
-      } else {
-        // 3타
-        e.userData.hp = 3;
-        e.material.color.setHex(0xffc14a); // 더 밝은 오렌지/골드
-        e.material.emissive.setHex(0x5a2a00);
-        e.material.emissiveIntensity = 0.35;
-        e.scale.multiplyScalar(1.25);
-      }
+      const type = ENEMY_TYPES[Math.floor(Math.random() * ENEMY_TYPES.length)];
+      applyEnemyType(e, type);
       e.position.set(laneX, 2.5, -280 - Math.random() * 60);
       e.userData.passed = false;
       // 블록이 생성될 때 일정 확률로 같은 레인에 아이템을 미리 배치한다.
@@ -839,15 +1146,26 @@
     // 발사 유틸
     function tryFire() {
       const nowT = performance.now();
-      if (nowT - (tryFire.last || 0) < fireInterval || fireCooldown > 0) return;
+      if (nowT - (tryFire.last || 0) < missileFireInterval || fireCooldown > 0) return;
       tryFire.last = nowT;
-      const b = bullets.find(o => !o.visible);
-      if (!b) return;
-      b.visible = true;
-      // 플레이어 전방(-Z)으로 조금 앞쪽에서 시작
-      b.position.set(player.position.x, player.position.y, player.position.z - 1.3);
-      b.userData.vz = -2.2 - speedScale * 0.2;
-      fireCooldown = fireInterval;
+      fireCooldown = missileFireInterval;
+      audio.playFire(missilesPerShot);
+
+      const originX = player.position.x;
+      const originY = player.position.y;
+      const originZ = player.position.z;
+      const vz = -2.2 - speedScale * 0.2;
+      const half = (missilesPerShot - 1) * 0.5;
+
+      for (let i = 0; i < missilesPerShot; i++) {
+        const bullet = bullets.find(o => !o.visible);
+        if (!bullet) break;
+        bullet.visible = true;
+        const offsetX = (i - half) * MISSILE_SPREAD;
+        // 좌우로 간격을 두고 동시에 발사 (중앙 기준 대칭)
+        bullet.position.set(originX + offsetX, originY, originZ - 1.3);
+        bullet.userData.vz = vz;
+      }
     }
 
     function aabbIntersect(aPos, aSize, bPos, bSize) {
@@ -859,6 +1177,8 @@
     function updateHUD() {
       $score.textContent = Math.floor(score).toString();
       $speed.textContent = speedScale.toFixed(1) + "x";
+      if ($missiles) $missiles.textContent = missilesPerShot.toString();
+      if ($missilesCollected) $missilesCollected.textContent = missilesCollected.toString();
     }
 
     // ----- 메인 루프 -----
@@ -919,7 +1239,7 @@
       if (fireCooldown > 0) fireCooldown = Math.max(0, fireCooldown - dt);
 
       // 오토 발사
-      if (isActive && autoFireEnabled) {
+      if (isActive && (autoFireEnabled || fireHeld)) {
         tryFire();
       }
 
@@ -928,21 +1248,25 @@
         for (const b of bullets) {
           if (!b.visible) continue;
           b.position.z += b.userData.vz * frameScale;
-          if (b.position.z < -350) { b.visible = false; continue; }
+          if (b.position.z < -280) { b.visible = false; continue; }
           // 적과 충돌 체크
           for (const e of enemies) {
             if (!e.visible) continue;
-            enemyHitbox.set(2.2, 2.2 * e.scale.y, 2.2);
+            enemyHitbox.copy(e.userData.hitbox || enemyHitbox.set(2.2, 2.2 * e.scale.y, 2.2));
             if (aabbIntersect(b.position, bulletSize, e.position, enemyHitbox)) {
               // 피격 처리
               b.visible = false;
               e.userData.hp = Math.max(0, (e.userData.hp || 1) - 1);
               if (e.userData.hp <= 0) {
+                const burstPos = e.position.clone();
                 e.visible = false;
                 e.position.z = -200;
-                score += 10; // 파괴 보상
+                score += e.userData.killScore || 10; // 유형별 파괴 보상
+                spawnDebrisBurst(burstPos, e.userData.type || ENEMY_TYPES[0]);
+                audio.playBreak();
               } else {
                 score += 3; // 피격 보상(부분 타격)
+                updateEnemyDamageVisual(e);
               }
               break;
             }
@@ -964,7 +1288,10 @@
           if (aabbIntersect(player.position, playerSize, item.position, missileItemSize)) {
             // 플레이어가 획득하면 점수 보상을 주고 곧바로 풀로 되돌린다.
             resetMissileItem(item);
+            missilesPerShot += 1;
+            missilesCollected += 1;
             score += 5;
+            updateHUD();
             continue;
           }
 
@@ -973,6 +1300,26 @@
             resetMissileItem(item);
           }
         }
+      }
+
+      // 파편 애니메이션
+      for (const chunk of debrisPieces) {
+        if (!chunk.visible) continue;
+        const data = chunk.userData;
+        data.life += dt;
+        if (data.life >= data.maxLife) {
+          chunk.visible = false;
+          chunk.material.opacity = 0;
+          continue;
+        }
+        const lifeRatio = data.life / data.maxLife;
+        chunk.position.addScaledVector(data.velocity, frameScale);
+        data.velocity.y -= 0.035 * frameScale;
+        data.velocity.multiplyScalar(0.995);
+        chunk.rotation.x += data.spin.x * frameScale * 60;
+        chunk.rotation.y += data.spin.y * frameScale * 60;
+        chunk.rotation.z += data.spin.z * frameScale * 60;
+        chunk.material.opacity = Math.max(0, 0.95 * (1 - lifeRatio));
       }
 
       // 활주로 텍스처 스크롤(전진감) - 일시정지/사망 시 정지
@@ -997,7 +1344,7 @@
           if (!e.visible) continue;
           e.position.z += travelSpeed; // 카메라 쪽으로
           // 충돌 체크 (박스 적: Y축 스케일 반영)
-          enemyHitbox.set(2.2, 2.2 * e.scale.y, 2.2);
+          enemyHitbox.copy(e.userData.hitbox || enemyHitbox.set(2.2, 2.2 * e.scale.y, 2.2));
           if (aabbIntersect(player.position, playerSize, e.position, enemyHitbox)) {
             isDead = true;
             isRunning = false;
@@ -1005,6 +1352,13 @@
             localStorage.setItem("space_dodge_best", String(best));
             document.getElementById("best").textContent = best.toString();
             showCenter(true, "충돌!", "R: 재시작 · 스페이스: 일시정지/재개");
+          }
+          if (e.userData.damagePhase > 0) {
+            e.userData.damagePhase = Math.max(0, e.userData.damagePhase - frameScale * 3);
+            if (e.userData.damagePhase === 0 && e.userData.type) {
+              const ratio = Math.max(0, e.userData.hp / e.userData.maxHp);
+              e.material.emissiveIntensity = e.userData.type.emissiveIntensity + (1 - ratio) * 0.35;
+            }
           }
           // 지나가면 점수
           if (!e.userData.passed && e.position.z > player.position.z + 1.5) {
@@ -1044,6 +1398,12 @@
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+      renderer.setPixelRatio(pixelRatio);
+      const starMat = stars.material;
+      if (starMat && starMat.uniforms && starMat.uniforms.uPixelRatio) {
+        starMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+      }
     });
 
     // 첫 입력 시 바로 시작하고 싶다면 아래 주석 해제

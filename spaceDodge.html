@@ -5,6 +5,7 @@
   <title>Space Dodge - Three.js</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-capable" content="yes">
 
   <style>
     html, body { height: 100%; margin: 0; background: #000; color: #e7f0ff; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -43,7 +44,9 @@
       font-size: clamp(18px, 2.8vw, 24px);
       font-weight: 600; letter-spacing: .3px;
       border-bottom-right-radius: 10px;
-      justify-self: start;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       pointer-events: auto;
     }
     #hud>div {
@@ -53,16 +56,14 @@
     }
     #hint{
       grid-area: hint;
-      
+      display: flex; align-items: center;
+      justify-content: center;
     }
     #hint>div {
-      text-align: right; opacity: .9; line-height: 1.4;
+      opacity: .9; line-height: 1.4;
       background: linear-gradient(to left, rgba(0,0,0,.65), rgba(0,0,0,0));
-      padding: 10px 14px; border-bottom-left-radius: 10px;
-      justify-self: end;
-      margin: 10px;
       pointer-events: auto;
-      display: flex; align-items: center; gap: 10px; width: 100%; justify-content: flex-end;
+      gap: 10px;
     }
     #hint .fs-btn {
       pointer-events: auto;
@@ -82,8 +83,8 @@
 
     }
     /* iOS 등에서 전체화면 대체 모드 */
-    body.pseudo-fullscreen { height: 100vh; overflow: hidden; }
-    body.pseudo-fullscreen canvas { position: fixed !important; inset: 0; width: 100vw !important; height: 100vh !important; z-index: 0; }
+    body.pseudo-fullscreen { height: 100dvh; overflow: hidden; }
+    body.pseudo-fullscreen canvas { position: fixed !important; inset: 0; width: 100vw !important; height: 100dvh !important; z-index: 0; }
     #centerMsg h1 { margin: 0 0 8px; font-size: clamp(22px, 4vw, 36px); }
     #centerMsg p { 
       margin: 6px 0; opacity: .9;
@@ -100,7 +101,7 @@
     /* 컨트롤바 안의 오토발사 버튼은 고정 배치 해제 */
     .control-bar {
       grid-area: controls;
-      display: flex; gap: 14px; align-items: center; justify-content: center;
+      display: flex; gap: 14px; align-items: start; justify-content: center;
       pointer-events: none;
       justify-self: center;
     }
@@ -136,10 +137,10 @@
         grid-template-columns: repeat(3, 33.3vw);
         grid-template-rows: repeat(4, 25vh);
         grid-template-areas:
-          "hud . hint"
-          ". centerMsg ."
-          ". . ."
-          ". controls .";
+        "hud . hint"
+        ". centerMsg ."
+        ". . ."
+        ". controls .";
       }
     
 
@@ -185,10 +186,8 @@
     <div>
       <h1>Space Dodge</h1>
       <p>이동 : 좌우 터치, ←/→ 또는 A/D </p>
-      <p>일시정지/시작 :  ⏸️ 버튼, 스페이스  </p>
-      <p>재시작 : 
-        ▶️
-        버튼, R </p>
+      <p>일시정지/시작 :  ⏸ 버튼, 스페이스  </p>
+      <p>재시작 : ▶ 버튼, R </p>
     </div>
   </div>
   <!-- 하단 컨트롤: 십자(D-Pad) + 오른쪽 액션(Start/Pause/AUTO) -->

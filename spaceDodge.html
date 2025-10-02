@@ -752,7 +752,7 @@
     const MISSILE_SPREAD = 0.85; // 동시에 발사될 때 좌우 간격
    // 총알(미사일) 풀
     const BULLET_POOL_SIZE = 120;
-    const bulletGeo = new THREE.CylinderGeometry(0.18, 0.28, 1.2, 8);
+    const bulletGeo = new THREE.CylinderGeometry(0.22, 0.32, 1.45, 8);
     const bulletMat = new THREE.MeshStandardMaterial({ color: 0x9be8ff, emissive: 0x66ccff, emissiveIntensity: 1.8, metalness: 0.1, roughness: 0.3 });
     const bullets = [];
     for (let i = 0; i < BULLET_POOL_SIZE; i++) {
@@ -761,7 +761,7 @@
       b.visible = false;
       b.userData.vz = -1.6; // 기본 속도 (전방 방향)
       // 글로우(발광) 이펙트: 약간 큰 실린더를 자식으로 붙여 가산합성
-      const glowGeo = new THREE.CylinderGeometry(0.28, 0.38, 1.4, 8);
+      const glowGeo = new THREE.CylinderGeometry(0.34, 0.46, 1.68, 8);
       const glowMat = new THREE.MeshBasicMaterial({ color: 0x9be8ff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false });
       const glow = new THREE.Mesh(glowGeo, glowMat);
       // 부모(bullet)가 이미 -Math.PI/2 회전되어 있어 자식은 추가 회전 불필요
@@ -770,7 +770,7 @@
       scene.add(b);
       bullets.push(b);
     }
-    const bulletSize = new THREE.Vector3(0.4, 0.4, 1.2);
+    const bulletSize = new THREE.Vector3(0.48, 0.48, 1.45);
     const enemyHitbox = new THREE.Vector3();
     let fireCooldown = 0;
     const BASE_MISSILE_FIRE_INTERVAL = 150; // ms

@@ -117,27 +117,77 @@
     ship.add(shipModel);
 
     // 엔진 화염 이펙트(모델 로딩 후 위치 조정 예정)
-    const flameMaterial = new THREE.MeshBasicMaterial({ color: 0x3fd4ff, transparent: true, opacity: 0.82, side: THREE.DoubleSide }); // 밝은 청록색 엔진 광원
-    const flameGeom = new THREE.ConeGeometry(0.3, 1.4, 18, 1, true); // 가늘고 긴 화염 형태
+    const flameTexture = createGlowTexture();
+    const flameBaseMaterial = new THREE.SpriteMaterial({
+      map: flameTexture,
+      color: 0x70e5ff,
+      transparent: true,
+      opacity: 0.5,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }); // 밝은 청록색 광채
     const flameMeshes = [createFlame(), createFlame()]; // 좌우 두 개의 분사구
-    flameMeshes.forEach((mesh) => {
-      mesh.rotation.x = Math.PI / 2; // 화염을 Z축 방향으로 뻗도록 회전
-      mesh.visible = false;
-      ship.add(mesh);
-    });
+    const flameLights = [createFlameLight(), createFlameLight()];
 
     function createFlame() {
-      return new THREE.Mesh(flameGeom, flameMaterial);
+      const material = flameBaseMaterial.clone();
+      material.opacity = flameBaseMaterial.opacity;
+      const sprite = new THREE.Sprite(material);
+      sprite.visible = false;
+      sprite.scale.setScalar(0.6);
+      ship.add(sprite);
+      return sprite;
     }
 
+    function createGlowTexture() {
+      const size = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const context = canvas.getContext('2d');
+      const gradient = context.createRadialGradient(
+        size / 2,
+        size / 2,
+        size * 0.1,
+        size / 2,
+        size / 2,
+        size * 0.5,
+      );
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.35, 'rgba(140,220,255,0.9)');
+      gradient.addColorStop(0.7, 'rgba(80,200,255,0.35)');
+      gradient.addColorStop(1, 'rgba(40,120,240,0)');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, size, size);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      if ('colorSpace' in texture) {
+        texture.colorSpace = THREE.SRGBColorSpace;
+      } else {
+        texture.encoding = THREE.sRGBEncoding;
+      }
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    function createFlameLight() {
+      const light = new THREE.PointLight(0x55d4ff, 0, 9, 2.2); // 부드러운 청색 포인트 조명
+      light.visible = false;
+      ship.add(light);
+      return light;
+    }
+
+
     function positionFlames(bounds) {
-      const exhaustZ = bounds.max.z + shipSize.z * 0.12; // 우주선 끝에서 조금 뒤에 화염 배치
+      const exhaustZ = bounds.max.z + shipSize.z * 0.10; // 우주선 끝에서 조금 뒤에 화염 배치
       const center = bounds.getCenter(flameCenter);
       const lateralOffset = Math.max(shipSize.x * 0.22, 0.45); // 좌우 분사구 간 거리
-      flameMeshes[0].position.set(-lateralOffset, center.y, exhaustZ);
-      flameMeshes[1].position.set(lateralOffset, center.y, exhaustZ);
-      flameMeshes.forEach((mesh) => {
+      flameMeshes.forEach((mesh, index) => {
+        const offsetX = index === 0 ? -lateralOffset : lateralOffset;
+        mesh.position.set(offsetX, center.y, exhaustZ);
+        mesh.scale.setScalar(0.6);
         mesh.visible = true;
+        flameLights[index].position.copy(mesh.position);
+        flameLights[index].visible = true;
       });
     }
 
@@ -180,8 +230,8 @@
         const scale = targetLength / maxAxis;
         model.scale.setScalar(scale);
 
-        // 모델 정면을 90° 회전시켜 전방(-Z)과 일치
-        model.rotation.set(0, THREE.MathUtils.degToRad(90), 0);
+        // 모델 정면을 180° 회전시켜 전방(-Z)과 일치시키고 머리를 약간 내려준다
+        model.rotation.set(THREE.MathUtils.degToRad(-20), THREE.MathUtils.degToRad(180), 0);
 
         shipModel.add(model);
 
@@ -335,7 +385,7 @@
       ship.rotation.x = THREE.MathUtils.clamp(ship.rotation.x + pitchInput * turnSpeed * delta, -Math.PI / 2.5, Math.PI / 2.5);
 
       // 현재 우주선의 방향 벡터 계산
-      forwardVector.set(0, -0.5, -1).applyQuaternion(ship.quaternion).normalize();
+      forwardVector.set(0, 0, -1).applyQuaternion(ship.quaternion).normalize();
       rightVector.copy(forwardVector).cross(upVector).normalize();
       const upDirection = rightVector.clone().cross(forwardVector).normalize();
 
@@ -385,15 +435,19 @@
 
       cameraLookAt.copy(ship.position).addScaledVector(forwardVector, 8); // 시선 대상은 우주선 앞쪽 8유닛
       camera.lookAt(cameraLookAt);
-
-      // 엔진 화염의 크기와 투명도를 입력에 따라 조절
+      // 원하는 광채 느낌에 맞춰 더 밝거나 작게 하고 싶다면 glowScale, targetOpacity, targetIntensity 값을 살짝씩 조절해보세요.
+      // 엔진 광채의 크기와 밝기를 입력에 따라 조절
       const thrustPulse = Math.sin(elapsed * 12) * 0.12 + 0.88; // 초당 12회 맥동으로 엔진 흔들림
-      const flameScaleY = thrustPulse * (isBoosting ? 2.4 : 1.4);
-      const flameScaleZ = thrustPulse * (keys['KeyW'] ? 2.2 : 1.2);
-      flameMeshes.forEach((mesh) => {
-        mesh.scale.set(1, flameScaleY, flameScaleZ); // 부스터 시 화염 길이 증가
+      const glowScale = thrustPulse * (isBoosting ? 1.2 : 0.85);
+      const targetOpacity = keys['KeyW'] || isBoosting ? 0.9 : 0.32;
+      const targetIntensity = keys['KeyW'] || isBoosting ? 3.2 : 0.4;
+
+      flameMeshes.forEach((sprite, index) => {
+        const scale = Math.max(0.45, glowScale);
+        sprite.scale.set(scale, scale, 1); // 화염 기둥 대신 둥근 광채 크기 조절
+        sprite.material.opacity = THREE.MathUtils.lerp(sprite.material.opacity, targetOpacity, 0.12);
+        flameLights[index].intensity = THREE.MathUtils.lerp(flameLights[index].intensity, targetIntensity, 0.18);
       });
-      flameMaterial.opacity = THREE.MathUtils.lerp(flameMaterial.opacity, keys['KeyW'] || isBoosting ? 0.92 : 0.4, 0.1); // 추진 시 더 밝아지도록 보간
 
       // 장면 렌더링 후 다음 프레임을 예약
       renderer.render(scene, camera);

@@ -48,19 +48,57 @@
     }
     /* 캔버스를 블록으로 표시해 여백 제거 */
     canvas { display: block; }
+
+    /* 터치 입력을 위한 전체 화면 투명 레이어 */
+    #touch-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 5;
+      background: transparent;
+      touch-action: none;
+    }
+
+    /* 전진 토글 버튼 */
+    #forward-toggle {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 14px 26px;
+      border-radius: 999px;
+      border: none;
+      background: rgba(111, 168, 255, 0.28);
+      backdrop-filter: blur(6px);
+      color: #d6e4ff;
+      font-size: 16px;
+      letter-spacing: 0.04em;
+      z-index: 10;
+      box-shadow: 0 6px 20px rgba(15, 45, 85, 0.45);
+      cursor: pointer;
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    #forward-toggle.active {
+      background: rgba(111, 196, 255, 0.45);
+      transform: translateX(-50%) scale(1.02);
+    }
   </style>
 </head>
 <body>
   <div id="overlay">
     <h1>Space Patrol</h1>
     <ul>
-      <li>`W / S` 앞으로 · 뒤로 추진</li>
+      <li>하단 토글 버튼: 엔진 ON / OFF</li>
+      <li>`W / S` 기체 피치 조정</li>
       <li>`A / D` 좌우 요 (Yaw)</li>
-      <li>`Arrow Up / Down` 피치 조정</li>
-      <li>`Q / E` 롤 회전</li>
       <li>`Shift` 부스터, `Space` 제동</li>
     </ul>
   </div>
+  <div id="touch-overlay"></div>
+  <button id="forward-toggle" type="button">엔진 OFF</button>
   <!-- three.js 모듈 경로를 브라우저에 알려주는 import map -->
   <script type="importmap">
     {
@@ -112,10 +150,43 @@
         spreadXZFactor: 0.45, // XZ 방향으로 퍼지는 범위 비율
         spreadYFactor: 0.11, // Y 방향으로 퍼지는 범위 비율
       },
+      // 플레이어 주변에 생성할 동적 소행성 파라미터
+      dynamicAsteroids: {
+        count: 20, // 동적으로 배치할 소행성 수
+        radiusMin: 40, // 최소 반지름
+        radiusMax: 140, // 최대 반지름
+        distanceMin: 420, // 플레이어로부터 최소 거리
+        distanceMax: 920, // 플레이어로부터 최대 거리
+        emissiveIntensityMin: 1.3, // 코어 발광 최소값
+        emissiveIntensityMax: 2.6, // 코어 발광 최대값
+        spinRange: 0.4, // 회전 속도 범위
+        palette: [
+          { core: 0x3c8eff, emissive: 0x1d6dff }, // 푸른색 계열
+          { core: 0x38f5b8, emissive: 0x14d68f }, // 청록색 계열
+          { core: 0xa5c4ff, emissive: 0x6ea6ff }, // 밝은 파랑 계열
+        ],
+      },
       // 경계 광채 렌더링 파라미터
       boundaryGlow: {
         innerScale: 0.98, // 실제 경계보다 약간 작은 반경
         opacity: 0.12, // 광채 투명도
+      },
+      // 추격형 소행성 파라미터
+      chaser: {
+        minSpawnDistance: 6000, // 플레이어와 최소 거리
+        maxSpawnDistance: 9000, // 플레이어와 최대 거리
+        radius: 140, // 소행성 기본 반지름
+        roughness: 0.45, // 표면 거칠기
+        metalness: 0.05, // 금속성
+        coreColor: 0xffe6a1, // 핵심 발광 색
+        emissiveColor: 0xff7a2d, // 발광 색상
+        emissiveIntensity: 1.8, // 발광 세기
+        glowColor: 0xff5b11, // 외곽 광채 색상
+        glowOpacity: 0.55, // 광채 투명도
+        driftSpeed: 120, // 기본 이동 속도
+        chaseAcceleration: 260, // 추격 가속도
+        maxSpeed: 420, // 추격 시 최고 속도
+        spinRange: 0.6, // 회전 속도 범위
       },
       // 엔진 화염 스프라이트 공통 설정
       flame: {
@@ -140,7 +211,8 @@
         bankReturnSmoothing: 2.2, // 기울기 복귀 감쇄 값
         throttleRiseSeconds: 3, // 스로틀 0→1에 걸리는 시간
         throttleFallSeconds: 1.5, // 스로틀 감소 시간
-        maxAutoBankAngle: Infinity, // 자동 기울기 제한 (무한)
+        // maxAutoBankAngle: Infinity, // 자동 기울기 제한 (무한)
+        maxAutoBankAngle: 180, // 자동 기울기 제한 (무한)
         strafeVerticalScale: 0.75, // 수직 이동 시 감쇠 비율
         boostSpeedMultiplier: 1.35, // 부스터 시 최고 속도 배율
         cameraFollowLerp: 0.15, // 카메라 추적 보간 비율
@@ -150,10 +222,25 @@
 
     // 키보드 입력 상태를 추적하고 축 값을 계산하는 관리 클래스
     class InputManager {
-      constructor() {
+      constructor(overlayElement, forwardButton) {
         this.keys = {}; // 현재 눌려 있는 키 상태 맵
+        this.pointerStrafe = 0; // 터치 기반 좌우 이동 값 (-1~1)
+        this.activePointerId = null; // 현재 추적 중인 포인터 ID
+        this.forwardToggle = false; // 전진 토글 상태
+        this.overlay = overlayElement; // 터치 입력 레이어
+        this.forwardButton = forwardButton; // 전진 토글 버튼
         window.addEventListener('keydown', this.handleKeyDown); // 키다운 이벤트 연결
         window.addEventListener('keyup', this.handleKeyUp); // 키업 이벤트 연결
+        if (this.overlay) {
+          this.overlay.addEventListener('pointerdown', this.handlePointerDown);
+          this.overlay.addEventListener('pointermove', this.handlePointerMove);
+          this.overlay.addEventListener('pointerup', this.handlePointerUp);
+          this.overlay.addEventListener('pointercancel', this.handlePointerUp);
+          this.overlay.addEventListener('pointerleave', this.handlePointerUp);
+        }
+        if (this.forwardButton) {
+          this.forwardButton.addEventListener('click', this.handleForwardToggle);
+        }
       }
 
       handleKeyDown = (event) => {
@@ -174,7 +261,247 @@
 
       // 두 키를 양/음 축으로 삼아 -1~1 범위 값을 계산
       getAxis(positiveCode, negativeCode) {
-        return (this.isPressed(positiveCode) ? 1 : 0) - (this.isPressed(negativeCode) ? 1 : 0);
+        let value = (this.isPressed(positiveCode) ? 1 : 0) - (this.isPressed(negativeCode) ? 1 : 0);
+        if (positiveCode === 'ArrowRight' && negativeCode === 'ArrowLeft') {
+          value += this.pointerStrafe; // 터치 기반 좌우 이동 추가
+          value = Math.max(-1, Math.min(1, value));
+        }
+        return value;
+      }
+
+      handlePointerDown = (event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return; // 마우스 우클릭 등은 무시
+        if (this.activePointerId !== null) return; // 이미 다른 포인터 추적 중
+        this.activePointerId = event.pointerId;
+        if (this.overlay && this.overlay.setPointerCapture) {
+          this.overlay.setPointerCapture(event.pointerId);
+        }
+        this.updatePointerStrafe(event.clientX);
+        event.preventDefault();
+      };
+
+      handlePointerMove = (event) => {
+        if (event.pointerId !== this.activePointerId) return;
+        this.updatePointerStrafe(event.clientX);
+      };
+
+      handlePointerUp = (event) => {
+        if (event.pointerId !== this.activePointerId) return;
+        this.activePointerId = null;
+        this.pointerStrafe = 0;
+        if (this.overlay && this.overlay.releasePointerCapture) {
+          this.overlay.releasePointerCapture(event.pointerId);
+        }
+      };
+
+      updatePointerStrafe(x) {
+        const width = window.innerWidth;
+        const half = width / 2;
+        const distanceFromCenter = Math.abs(x - half);
+        const deadZone = width * 0.04; // 중앙 4% 영역은 중립
+        if (distanceFromCenter <= deadZone) {
+          this.pointerStrafe = 0;
+        } else {
+          this.pointerStrafe = x >= half ? 1 : -1;
+        }
+      }
+
+      handleForwardToggle = () => {
+        this.forwardToggle = !this.forwardToggle;
+        if (!this.forwardButton) return;
+        this.forwardButton.classList.toggle('active', this.forwardToggle);
+        this.forwardButton.textContent = this.forwardToggle ? '엔진 ON' : '엔진 OFF';
+      };
+
+      forwardToggleActive() {
+        return this.forwardToggle;
+      }
+    }
+
+    // 발광 소행성 기본 클래스 (코어/광채 조합)
+    class RadiantAsteroid {
+      constructor(environment, options) {
+        const {
+          radius,
+          coreColor,
+          emissiveColor,
+          emissiveIntensity,
+          spinRange,
+          initialVelocity = new THREE.Vector3(),
+          roughness = 0.45,
+          metalness = 0.1,
+          enableGlow = true,
+          glowColor = coreColor,
+          glowOpacity = 0.5,
+          glowScale = 1.55,
+        } = options;
+
+        this.environment = environment;
+        this.scene = environment.scene;
+        this.radius = radius;
+        this.spinRange = spinRange;
+        this.velocity = initialVelocity.clone();
+        this.enableGlow = enableGlow;
+
+        this.core = this.createCoreMesh(radius, coreColor, emissiveColor, emissiveIntensity, roughness, metalness);
+        this.glow = this.enableGlow
+          ? this.createGlowMesh(radius, glowColor, glowOpacity, glowScale)
+          : null;
+
+        this.spin = new THREE.Vector3(
+          THREE.MathUtils.randFloatSpread(this.spinRange),
+          THREE.MathUtils.randFloatSpread(this.spinRange),
+          THREE.MathUtils.randFloatSpread(this.spinRange),
+        );
+
+        this.scene.add(this.core);
+        if (this.glow) this.scene.add(this.glow);
+      }
+
+      createCoreMesh(radius, coreColor, emissiveColor, emissiveIntensity, roughness, metalness) {
+        const geometry = new THREE.IcosahedronGeometry(radius, 3);
+        const material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(coreColor),
+          roughness,
+          metalness,
+          emissive: new THREE.Color(emissiveColor),
+          emissiveIntensity,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        return mesh;
+      }
+
+      createGlowMesh(radius, glowColor, glowOpacity, scale) {
+        const geometry = new THREE.SphereGeometry(radius * scale, 32, 24);
+        const material = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(glowColor),
+          transparent: true,
+          opacity: glowOpacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: false,
+          side: THREE.BackSide,
+        });
+        return new THREE.Mesh(geometry, material);
+      }
+
+      setPosition(position) {
+        this.core.position.copy(position);
+        if (this.glow) this.glow.position.copy(position);
+      }
+
+      setVelocity(vector) {
+        this.velocity.copy(vector);
+      }
+
+      update(delta) {
+        if (this.velocity.lengthSq() > 0) {
+          this.core.position.addScaledVector(this.velocity, delta);
+          if (this.glow) this.glow.position.copy(this.core.position);
+        }
+
+        this.core.rotation.x += this.spin.x * delta;
+        this.core.rotation.y += this.spin.y * delta;
+        this.core.rotation.z += this.spin.z * delta;
+        if (this.glow) {
+          this.glow.rotation.x += this.spin.x * 0.6 * delta;
+          this.glow.rotation.y += this.spin.y * 0.6 * delta;
+          this.glow.rotation.z += this.spin.z * 0.6 * delta;
+        }
+      }
+
+      dispose() {
+        this.scene.remove(this.core);
+        this.core.geometry.dispose();
+        this.core.material.dispose();
+        if (this.glow) {
+          this.scene.remove(this.glow);
+          this.glow.geometry.dispose();
+          this.glow.material.dispose();
+        }
+      }
+    }
+
+    // 플레이어를 추격하는 발광 소행성
+    class ChasingAsteroid extends RadiantAsteroid {
+      constructor(environment, target) {
+        const cfg = CONFIG.chaser;
+        super(environment, {
+          radius: cfg.radius,
+          coreColor: cfg.coreColor,
+          emissiveColor: cfg.emissiveColor,
+          emissiveIntensity: cfg.emissiveIntensity,
+          glowColor: cfg.glowColor,
+          glowOpacity: cfg.glowOpacity,
+          spinRange: cfg.spinRange,
+          initialVelocity: new THREE.Vector3(),
+          roughness: cfg.roughness,
+          metalness: cfg.metalness,
+        });
+        this.target = target;
+        this.config = cfg;
+        this.tempVector = new THREE.Vector3();
+        this.resetPosition();
+      }
+
+      resetPosition() {
+        const dir = new THREE.Vector3(
+          THREE.MathUtils.randFloatSpread(2),
+          THREE.MathUtils.randFloatSpread(2),
+          THREE.MathUtils.randFloatSpread(2),
+        ).normalize();
+        const distance = THREE.MathUtils.randFloat(
+          this.config.minSpawnDistance,
+          this.config.maxSpawnDistance,
+        );
+        const targetPos = this.target.group.position;
+        const position = dir.multiplyScalar(distance).add(targetPos);
+        this.setPosition(position);
+        this.setVelocity(dir.multiplyScalar(-this.config.driftSpeed));
+      }
+
+      update(delta) {
+        if (!this.target?.group) return;
+        this.tempVector.copy(this.target.group.position).sub(this.core.position);
+        const distance = this.tempVector.length();
+        if (distance > 1) {
+          this.tempVector.normalize();
+          this.velocity.addScaledVector(this.tempVector, this.config.chaseAcceleration * delta);
+        }
+
+        const currentSpeedSq = this.velocity.lengthSq();
+        const maxSpeedSq = this.config.maxSpeed * this.config.maxSpeed;
+        if (currentSpeedSq > maxSpeedSq) {
+          this.velocity.setLength(this.config.maxSpeed);
+        }
+
+        this.core.position.addScaledVector(this.velocity, delta);
+        this.environment.enforceBounds(this.core.position, this.velocity);
+        if (this.glow) this.glow.position.copy(this.core.position);
+
+        this.core.rotation.x += this.spin.x * delta;
+        this.core.rotation.y += this.spin.y * delta;
+        this.core.rotation.z += this.spin.z * delta;
+        if (this.glow) {
+          this.glow.rotation.x += this.spin.x * 0.5 * delta;
+          this.glow.rotation.y += this.spin.y * 0.5 * delta;
+          this.glow.rotation.z += this.spin.z * 0.5 * delta;
+        }
+      }
+    }
+
+    // 플레이어 주변에서 떠다니는 발광 소행성 (광채 없음)
+    class ClusterAsteroid extends RadiantAsteroid {
+      constructor(environment, options) {
+        super(environment, { ...options, enableGlow: false });
+        this.spinRange = options.spinRange ?? this.spinRange;
+        this.spin = new THREE.Vector3(
+          THREE.MathUtils.randFloatSpread(this.spinRange),
+          THREE.MathUtils.randFloatSpread(this.spinRange),
+          THREE.MathUtils.randFloatSpread(this.spinRange),
+        );
       }
     }
 
@@ -193,6 +520,8 @@
         const { boundaryMesh, boundaryGlow } = this.createBoundary(); // 경계 메쉬/광채 생성
         this.boundaryMesh = boundaryMesh; // 와이어 경계 그물
         this.boundaryGlow = boundaryGlow; // 경계 광채 메쉬
+        this.chasingAsteroids = []; // 추격형 소행성 목록
+        this.dynamicAsteroids = []; // 플레이어 주변 발광 소행성 목록
       }
 
       // 균일한 체적 분포로 별을 생성해 장면에 추가
@@ -317,6 +646,14 @@
 
         this.boundaryMesh.rotation.y += delta * this.boundaryRotationSpeed; // 와이어 경계를 천천히 회전
         this.boundaryGlow.rotation.y -= delta * (this.boundaryRotationSpeed * 0.6); // 광채는 반대 방향으로 회전
+
+        for (const asteroid of this.chasingAsteroids) {
+          asteroid.update(delta); // 추격 소행성 갱신
+        }
+
+        for (const asteroid of this.dynamicAsteroids) {
+          asteroid.update(delta); // 주변 소행성 회전 및 움직임
+        }
       }
 
       // 이동 제한 반경을 넘으면 위치를 되돌리고 속도를 반사
@@ -331,6 +668,55 @@
           velocity.addScaledVector(normal, -(1 + this.boundaryBounce) * outwardSpeed); // 반발 계수 적용해 반사
         }
       }
+
+      // 추격형 소행성을 새로 생성하여 장면에 추가
+      spawnChasingAsteroid(target) {
+        const asteroid = new ChasingAsteroid(this, target);
+        this.chasingAsteroids.push(asteroid);
+        return asteroid;
+      }
+
+      // 플레이어 주변에 다양한 색/크기의 소행성 군집 생성
+      spawnAsteroidClusterAround(target, count = CONFIG.dynamicAsteroids.count) {
+        if (!target?.group) return [];
+        const spawned = [];
+        const basePos = target.group.position;
+        const cfg = CONFIG.dynamicAsteroids;
+        const palette = cfg.palette;
+
+        for (let i = 0; i < count; i += 1) {
+          const direction = new THREE.Vector3(
+            THREE.MathUtils.randFloatSpread(2),
+            THREE.MathUtils.randFloatSpread(2),
+            THREE.MathUtils.randFloatSpread(2),
+          ).normalize();
+          const distance = THREE.MathUtils.randFloat(cfg.distanceMin, cfg.distanceMax);
+          const position = direction.clone().multiplyScalar(distance).add(basePos);
+
+          const radius = THREE.MathUtils.randFloat(cfg.radiusMin, cfg.radiusMax);
+          const paletteEntry = palette[Math.floor(Math.random() * palette.length)] || palette[0];
+          const emissiveIntensity = THREE.MathUtils.randFloat(
+            cfg.emissiveIntensityMin,
+            cfg.emissiveIntensityMax,
+          );
+
+          const asteroid = new ClusterAsteroid(this, {
+            radius,
+            coreColor: paletteEntry.core,
+            emissiveColor: paletteEntry.emissive,
+            emissiveIntensity,
+            spinRange: cfg.spinRange,
+            roughness: 0.42,
+            metalness: 0.08,
+          });
+
+          asteroid.setPosition(position);
+          asteroid.core.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+          this.dynamicAsteroids.push(asteroid);
+          spawned.push(asteroid);
+        }
+        return spawned;
+      }
     }
 
     // 우주선 모델 로딩, 비행 물리, 카메라 및 효과를 관리
@@ -343,6 +729,7 @@
         this.flight = CONFIG.flight; // 비행 설정 캐시
 
         this.group = new THREE.Group(); // 우주선 전체 그룹(위치/회전)
+        this.group.rotation.order = 'YXZ'; // 요→피치→롤 순으로 적용해 짐벌락 완화
         this.scene.add(this.group); // 우주선 그룹을 장면에 추가
         this.modelRoot = new THREE.Group(); // 실제 glTF 모델이 들어갈 루트
         this.group.add(this.modelRoot); // 루트를 우주선 그룹에 부착
@@ -355,6 +742,7 @@
         this.forward = new THREE.Vector3(); // 전방 단위 벡터
         this.right = new THREE.Vector3(); // 우측 단위 벡터
         this.up = new THREE.Vector3(0, 1, 0); // 월드 기준 위 방향
+        this.tempEuler = new THREE.Euler(0, 0, 0, 'YXZ'); // 회전 계산용 오일러
 
         this.rotationState = {
           yaw: 0,
@@ -370,7 +758,9 @@
         this.turnSpeed = THREE.MathUtils.degToRad(this.flight.turnSpeedDegPerSec); // 요/피치 속도
         this.yawAutoStrafeRate = THREE.MathUtils.degToRad(this.flight.yawAutoStrafeDegPerSec); // 횡이동 자동 요 속도
         this.bankAccumRate = THREE.MathUtils.degToRad(this.flight.bankAccumDegPerSec); // 자동 롤 누적 속도
-        this.maxAutoBankAngle = this.flight.maxAutoBankAngle; // 자동 롤 최대치
+        this.maxAutoBankAngle = Number.isFinite(this.flight.maxAutoBankAngle)
+          ? THREE.MathUtils.degToRad(this.flight.maxAutoBankAngle) // 도 단위 입력을 라디안으로 변환
+          : this.flight.maxAutoBankAngle; // 무한대 등은 그대로 유지
 
         this.flameMaterial = new THREE.SpriteMaterial({
           map: createGlowTexture(CONFIG.flame.glowTextureSize), // 광채 텍스처 맵
@@ -423,7 +813,7 @@
           const scale = targetLength / maxAxis; // 스케일 비율 계산
           model.scale.setScalar(scale); // 균일 스케일 적용
 
-          model.rotation.set(THREE.MathUtils.degToRad(-25), THREE.MathUtils.degToRad(180), 0); // 전진 방향에 맞게 회전
+          model.rotation.set(THREE.MathUtils.degToRad(-25), THREE.MathUtils.degToRad(180), 0); // 초기 각도를 조금 더 위로 세움
 
           this.modelRoot.add(model); // 모델을 우주선 루트에 추가
 
@@ -472,15 +862,18 @@
         if (!this.modelLoaded) return; // 모델이 로딩되기 전에는 업데이트를 중단
 
         const input = this.input; // 입력 상태 단축 참조
-        const rollInput = input.getAxis('KeyQ', 'KeyE');
         const yawInput = input.getAxis('KeyA', 'KeyD');
-        const pitchInput = input.getAxis('ArrowUp', 'ArrowDown');
+        const pitchInput = input.getAxis('KeyS', 'KeyW'); // W/S 키를 이용해 피치 조절
         const strafeInput = input.getAxis('ArrowRight', 'ArrowLeft');
         const verticalInput = input.getAxis('KeyR', 'KeyF');
         const isBoosting = input.isPressed('ShiftLeft') || input.isPressed('ShiftRight'); // Shift 키로 부스터 여부 확인
 
-        // 스로틀은 W 유지 시 상승하고 키를 떼면 서서히 감소
-        if (input.isPressed('KeyW')) {
+        // 토글 버튼과 연동되는 전진 스로틀 (키보드 W는 기동 입력으로 사용)
+        const toggleActive = typeof input.forwardToggleActive === 'function'
+          ? input.forwardToggleActive()
+          : input.isPressed('KeyW');
+
+        if (toggleActive) {
           this.throttle = Math.min(1, this.throttle + delta * this.throttleRiseRate);
         } else {
           this.throttle = Math.max(0, this.throttle - delta * this.throttleFallRate);
@@ -497,18 +890,8 @@
           this.throttle,
         ); // 스로틀 비율에 따른 전진 가속도 계산
 
-        // 수동 롤(Q/E) 및 자동 선회 기울기 계산
-        this.rotationState.manualBank += rollInput * this.turnSpeed * delta;
-        if (Number.isFinite(this.maxAutoBankAngle)) { // 제한 값이 유한한 경우에만 클램프 적용
-          this.rotationState.manualBank = THREE.MathUtils.clamp(
-            this.rotationState.manualBank,
-            -this.maxAutoBankAngle,
-            this.maxAutoBankAngle,
-          );
-        } // 무한대가 아닌 경우에만 롤 각도 제한
-        if (rollInput === 0) {
-          this.rotationState.manualBank = damp(this.rotationState.manualBank, 0, 4.5, delta); // 입력이 없을 때 서서히 복귀
-        }
+        // 좌우 선회에 따라 자동으로 기체가 기울도록 처리 (수동 롤 제거)
+        this.rotationState.manualBank = damp(this.rotationState.manualBank, 0, 4.5, delta); // 항상 서서히 수평으로 복귀
 
         const steeringComposite = yawInput + strafeInput * 0.6; // 선회 입력과 횡이동을 합산
         if (steeringComposite !== 0) { // 입력이 유지되는 동안 기울기 목표 누적
@@ -547,35 +930,27 @@
         this.rotationState.yaw += yawInput * this.turnSpeed * delta; // 직접 입력에 의한 요 회전
         this.rotationState.yaw += -strafeInput * this.yawAutoStrafeRate * delta; // 횡이동에 따른 자동 요 회전
 
-        const pitchTarget = THREE.MathUtils.clamp(
-          this.rotationState.pitch + pitchInput * this.turnSpeed * delta,
-          -Math.PI / 2.5,
-          Math.PI / 2.5,
-        ); // 피치 입력을 제한 범위로 클램프
-        this.rotationState.pitch = damp(
-          this.rotationState.pitch,
-          pitchTarget,
-          8,
-          delta,
-        ); // 피치 값을 부드럽게 목표 각도로 보간
+        const pitchLimit = THREE.MathUtils.degToRad(89); // 짐벌락 방지를 위해 ±89°로 제한
+        this.rotationState.pitch = THREE.MathUtils.clamp(
+          this.rotationState.pitch + pitchInput * -this.turnSpeed * delta,
+          -pitchLimit,
+          pitchLimit,
+        ); // 피치 입력을 직접 누적 (±89° 제한)
 
-        this.group.rotation.set(
+        this.tempEuler.set(
           this.rotationState.pitch,
           this.rotationState.yaw,
           totalBank,
-        ); // 계산된 자세를 그룹에 적용
+        );
+        this.group.quaternion.setFromEuler(this.tempEuler); // 계산된 자세를 그룹에 적용
 
         this.forward.set(0, 0, -1).applyQuaternion(this.group.quaternion).normalize(); // 우주선 전방 벡터 업데이트
         this.right.copy(this.forward).cross(this.up).normalize(); // 우측 벡터 계산
         const upDirection = this.right.clone().cross(this.forward).normalize(); // 수직 벡터 계산
 
-        const thrust = (input.isPressed('KeyW') ? currentAcceleration : 0) * (isBoosting ? this.flight.boostMultiplier : 1); // 추진력 계산
+        const thrust = (toggleActive ? currentAcceleration : 0) * (isBoosting ? this.flight.boostMultiplier : 1); // 토글 기반 추진력 계산
         if (thrust > 0) {
           this.velocity.addScaledVector(this.forward, thrust * delta); // 전방 방향으로 가속도 적용
-        }
-
-        if (input.isPressed('KeyS')) {
-          this.velocity.addScaledVector(this.forward, -this.flight.acceleration * 0.6 * delta); // 후진 입력 처리
         }
 
         if (input.isPressed('Space')) {
@@ -607,6 +982,13 @@
           : this.flight.damping; // 부스터 여부로 감쇠 조정
         this.velocity.multiplyScalar(appliedDamping); // 감쇠 적용
 
+        if (Math.abs(strafeInput) === 0 && Math.abs(verticalInput) === 0) {
+          const speed = this.velocity.length();
+          if (speed > 0.0001) {
+            this.velocity.copy(this.forward).multiplyScalar(speed); // 기체 전방을 향해 진행 방향 정렬
+          }
+        }
+
         this.group.position.addScaledVector(this.velocity, delta); // 속도에 따라 우주선 위치 이동
         this.environment.enforceBounds(this.group.position, this.velocity); // 경계 충돌 처리
 
@@ -618,8 +1000,11 @@
 
         const thrustPulse = Math.sin(elapsed * 12) * 0.12 + 0.88; // 부드러운 펄스 애니메이션 값
         const glowScale = thrustPulse * (isBoosting ? 1.2 : 0.85); // 펄스 크기 결정
-        const targetOpacity = input.isPressed('KeyW') || isBoosting ? 0.9 : 0.32; // 광채 목표 투명도
-        const targetIntensity = input.isPressed('KeyW') || isBoosting ? 3.2 : 0.4; // 조명 목표 밝기
+        const throttleActive = typeof input.forwardToggleActive === 'function'
+          ? input.forwardToggleActive()
+          : input.isPressed('KeyW');
+        const targetOpacity = throttleActive || isBoosting ? 0.9 : 0.32; // 광채 목표 투명도
+        const targetIntensity = throttleActive || isBoosting ? 3.2 : 0.4; // 조명 목표 밝기
 
         this.flameSprites.forEach((sprite, index) => {
           const scale = Math.max(0.45, glowScale); // 최소 크기 확보 후 스케일 결정
@@ -714,10 +1099,14 @@
       rimLight.position.set(-6, -2, -4); // 배면 강조 라이트 위치
       scene.add(rimLight);
 
-      const input = new InputManager(); // 키 입력 관리 인스턴스
+      const overlayElement = document.getElementById('touch-overlay'); // 터치 입력 레이어
+      const forwardButton = document.getElementById('forward-toggle'); // 전진 토글 버튼
+      const input = new InputManager(overlayElement, forwardButton); // 입력 관리 인스턴스
       const environment = new SpaceEnvironment(scene); // 별/소행성/경계 생성기
       const ship = new ShipController(scene, camera, input, environment); // 우주선 컨트롤러
       await ship.ready; // glTF 모델이 준비될 때까지 대기
+      //environment.spawnChasingAsteroid(ship); // 초기 추격형 소행성 배치
+      environment.spawnAsteroidClusterAround(ship); // 플레이어 주변 소행성 군집 배치
 
       const clock = new THREE.Clock(); // 델타 타이밍 계산용 시계
       const renderLoop = () => { // 매 프레임 호출되는 렌더 루프
@@ -737,7 +1126,7 @@
       });
     }
 
-    init().catch((error) => {
+init().catch((error) => {
       console.error('초기화 중 오류가 발생했습니다.', error); // 초기화 실패 시 로깅
     });
   </script>

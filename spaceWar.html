@@ -352,6 +352,17 @@
     const maxSpeed = 42; // 기본 최고 속도
     const damping = 0.985; // 속도 감쇠율(마찰)
     const turnSpeed = THREE.MathUtils.degToRad(60); // 초당 60도 회전 속도
+    const rotationState = {
+      yaw: 0,
+      pitch: 0,
+      manualBank: 0,
+      autoBank: 0,
+    };
+
+    function damp(current, target, smoothing, deltaTime) {
+      const factor = 1 - Math.exp(-smoothing * deltaTime);
+      return THREE.MathUtils.lerp(current, target, factor);
+    }
 
     // 속도 벡터가 한계를 넘지 않도록 조정
     function clampLength(vector, max) {
@@ -379,10 +390,37 @@
       const rollInput = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
       const yawInput = (keys['KeyA'] ? 1 : 0) - (keys['KeyD'] ? 1 : 0);
       const pitchInput = (keys['ArrowUp'] ? 1 : 0) - (keys['ArrowDown'] ? 1 : 0);
+      const strafeInput = (keys['ArrowRight'] ? 1 : 0) - (keys['ArrowLeft'] ? 1 : 0);
 
-      ship.rotation.z += rollInput * turnSpeed * delta;
-      ship.rotation.y += yawInput * turnSpeed * delta;
-      ship.rotation.x = THREE.MathUtils.clamp(ship.rotation.x + pitchInput * turnSpeed * delta, -Math.PI / 2.5, Math.PI / 2.5);
+      rotationState.manualBank += rollInput * turnSpeed * delta;
+      rotationState.manualBank = THREE.MathUtils.clamp(
+        rotationState.manualBank,
+        THREE.MathUtils.degToRad(-75),
+        THREE.MathUtils.degToRad(75),
+      );
+      if (rollInput === 0) {
+        rotationState.manualBank = damp(rotationState.manualBank, 0, 4.5, delta);
+      }
+
+      const autoBankTarget = THREE.MathUtils.degToRad(-(strafeInput * 38 + yawInput * 18));
+      rotationState.autoBank = damp(rotationState.autoBank, autoBankTarget, 6, delta);
+      const totalBank = THREE.MathUtils.clamp(
+        rotationState.manualBank + rotationState.autoBank,
+        THREE.MathUtils.degToRad(-80),
+        THREE.MathUtils.degToRad(80),
+      );
+
+      rotationState.yaw += yawInput * turnSpeed * delta;
+      rotationState.yaw += THREE.MathUtils.degToRad(strafeInput * 48) * delta; // 좌우 입력 시 자동 선회
+
+      const pitchTarget = THREE.MathUtils.clamp(
+        rotationState.pitch + pitchInput * turnSpeed * delta,
+        -Math.PI / 2.5,
+        Math.PI / 2.5,
+      );
+      rotationState.pitch = damp(rotationState.pitch, pitchTarget, 8, delta);
+
+      ship.rotation.set(rotationState.pitch, rotationState.yaw, totalBank);
 
       // 현재 우주선의 방향 벡터 계산
       forwardVector.set(0, 0, -1).applyQuaternion(ship.quaternion).normalize();
@@ -411,7 +449,6 @@
       }
 
       // 좌우/상하 이동 입력 반영
-      const strafeInput = (keys['ArrowRight'] ? 1 : 0) - (keys['ArrowLeft'] ? 1 : 0);
       if (strafeInput !== 0) {
         velocity.addScaledVector(rightVector, strafeInput * strafeAcceleration * delta);
       }
@@ -435,7 +472,6 @@
 
       cameraLookAt.copy(ship.position).addScaledVector(forwardVector, 8); // 시선 대상은 우주선 앞쪽 8유닛
       camera.lookAt(cameraLookAt);
-      // 원하는 광채 느낌에 맞춰 더 밝거나 작게 하고 싶다면 glowScale, targetOpacity, targetIntensity 값을 살짝씩 조절해보세요.
       // 엔진 광채의 크기와 밝기를 입력에 따라 조절
       const thrustPulse = Math.sin(elapsed * 12) * 0.12 + 0.88; // 초당 12회 맥동으로 엔진 흔들림
       const glowScale = thrustPulse * (isBoosting ? 1.2 : 0.85);

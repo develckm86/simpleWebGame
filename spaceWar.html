@@ -119,16 +119,34 @@
     // 엔진 화염 이펙트(모델 로딩 후 위치 조정 예정)
     const flameMaterial = new THREE.MeshBasicMaterial({ color: 0x3fd4ff, transparent: true, opacity: 0.82, side: THREE.DoubleSide }); // 밝은 청록색 엔진 광원
     const flameGeom = new THREE.ConeGeometry(0.3, 1.4, 18, 1, true); // 가늘고 긴 화염 형태
-    const flameMesh = new THREE.Mesh(flameGeom, flameMaterial);
-    flameMesh.rotation.x = Math.PI / 2; // 화염을 Z축 방향으로 뻗도록 회전
-    flameMesh.visible = false;
-    ship.add(flameMesh);
+    const flameMeshes = [createFlame(), createFlame()]; // 좌우 두 개의 분사구
+    flameMeshes.forEach((mesh) => {
+      mesh.rotation.x = Math.PI / 2; // 화염을 Z축 방향으로 뻗도록 회전
+      mesh.visible = false;
+      ship.add(mesh);
+    });
+
+    function createFlame() {
+      return new THREE.Mesh(flameGeom, flameMaterial);
+    }
+
+    function positionFlames(bounds) {
+      const exhaustZ = bounds.max.z + shipSize.z * 0.12; // 우주선 끝에서 조금 뒤에 화염 배치
+      const center = bounds.getCenter(flameCenter);
+      const lateralOffset = Math.max(shipSize.x * 0.22, 0.45); // 좌우 분사구 간 거리
+      flameMeshes[0].position.set(-lateralOffset, center.y, exhaustZ);
+      flameMeshes[1].position.set(lateralOffset, center.y, exhaustZ);
+      flameMeshes.forEach((mesh) => {
+        mesh.visible = true;
+      });
+    }
 
     // glTF 로딩과 크기 조정을 위한 보조 객체들
     const loader = new GLTFLoader();
     const shipBounds = new THREE.Box3();
     const shipSize = new THREE.Vector3();
     const shipCenter = new THREE.Vector3();
+    const flameCenter = new THREE.Vector3();
 
     // 우주선 모델을 불러와 중심/스케일을 정렬하고 화염 위치를 맞춘다
     loader.load(
@@ -162,18 +180,16 @@
         const scale = targetLength / maxAxis;
         model.scale.setScalar(scale);
 
-        // 기본 진행 방향이 +Z가 되도록 회전
-        model.rotation.y = Math.PI / 2;
+        // 모델 정면을 90° 회전시켜 전방(-Z)과 일치
+        model.rotation.set(0, THREE.MathUtils.degToRad(90), 0);
 
         shipModel.add(model);
 
         shipBounds.setFromObject(model);
         shipBounds.getSize(shipSize);
 
-        // 화염 메시를 엔진 뒤쪽으로 이동시키고 표시
-        const exhaustZ = shipBounds.max.z + shipSize.z * 0.12; // 우주선 끝에서 조금 뒤에 화염 배치
-        flameMesh.position.set(0, shipBounds.getCenter(new THREE.Vector3()).y, exhaustZ);
-        flameMesh.visible = true;
+        // 두 개의 화염 위치를 엔진 끝으로 맞추고 표시
+        positionFlames(shipBounds);
       },
       undefined,
       (error) => {
@@ -319,7 +335,7 @@
       ship.rotation.x = THREE.MathUtils.clamp(ship.rotation.x + pitchInput * turnSpeed * delta, -Math.PI / 2.5, Math.PI / 2.5);
 
       // 현재 우주선의 방향 벡터 계산
-      forwardVector.set(0, 0, -1).applyQuaternion(ship.quaternion).normalize();
+      forwardVector.set(0, -0.5, -1).applyQuaternion(ship.quaternion).normalize();
       rightVector.copy(forwardVector).cross(upVector).normalize();
       const upDirection = rightVector.clone().cross(forwardVector).normalize();
 
@@ -372,8 +388,12 @@
 
       // 엔진 화염의 크기와 투명도를 입력에 따라 조절
       const thrustPulse = Math.sin(elapsed * 12) * 0.12 + 0.88; // 초당 12회 맥동으로 엔진 흔들림
-      flameMesh.scale.set(1, thrustPulse * (isBoosting ? 2.4 : 1.4), thrustPulse * (keys['KeyW'] ? 2.2 : 1.2)); // 부스터 시 화염 길이 증가
-      flameMesh.material.opacity = THREE.MathUtils.lerp(flameMesh.material.opacity, keys['KeyW'] || isBoosting ? 0.92 : 0.4, 0.1); // 추진 시 더 밝아지도록 보간
+      const flameScaleY = thrustPulse * (isBoosting ? 2.4 : 1.4);
+      const flameScaleZ = thrustPulse * (keys['KeyW'] ? 2.2 : 1.2);
+      flameMeshes.forEach((mesh) => {
+        mesh.scale.set(1, flameScaleY, flameScaleZ); // 부스터 시 화염 길이 증가
+      });
+      flameMaterial.opacity = THREE.MathUtils.lerp(flameMaterial.opacity, keys['KeyW'] || isBoosting ? 0.92 : 0.4, 0.1); // 추진 시 더 밝아지도록 보간
 
       // 장면 렌더링 후 다음 프레임을 예약
       renderer.render(scene, camera);

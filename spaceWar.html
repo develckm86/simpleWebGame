@@ -345,22 +345,31 @@
     const cameraLookAt = new THREE.Vector3();
 
     // 비행 조작감을 조절하는 파라미터 모음
-    const acceleration = 22; // 전진 가속도
+    const acceleration = 22; // 전진 가속도(최저치)
     const strafeAcceleration = 12; // 좌우 이동 가속도
     const boostMultiplier = 1.8; // 부스터 배율
     const brakingForce = 24; // 스페이스바 제동력
-    const maxSpeed = 42; // 기본 최고 속도
+    const baseMaxSpeed = 42; // 기본 최고 속도
+    const boostedMaxSpeed = baseMaxSpeed * 3; // W키 유지 시 목표 속도(3배)
     const damping = 0.985; // 속도 감쇠율(마찰)
-    const turnSpeed = THREE.MathUtils.degToRad(60); // 초당 60도 회전 속도
+    const turnSpeed = THREE.MathUtils.degToRad(36); // 방향키 유지 시 10초에 1바퀴(360°/10)
+    
+    const yawAutoStrafeFactor = 36; // 횡이동 입력 시 자동 회전(°/s)
+    // const maxAutoBankAngle = THREE.MathUtils.degToRad(360); // 자동 뱅크 최대치 (거의 배를 하늘로 향하게)
+    const maxAutoBankAngle = Infinity; // 자동 뱅크 최대치 제한 해제 (입력 유지 시 계속 회전)
+    const bankAccumRate = THREE.MathUtils.degToRad(70); // 회전 입력 유지 시 초당 누적되는 기울기
+    const bankReturnSmoothing = 2.2; // 회전 입력 해제 시 원위치로 돌아오는 속도
     const rotationState = {
       yaw: 0,
       pitch: 0,
       manualBank: 0,
       autoBank: 0,
-    };
+      autoBankGoal: 0,
+    }; // 선회 상태를 누적해 부드러운 조종감을 유지
+    let throttle = 0; // W 키 유지 시 누적되는 추진량 (0~1)
 
     function damp(current, target, smoothing, deltaTime) {
-      const factor = 1 - Math.exp(-smoothing * deltaTime);
+      const factor = 1 - Math.exp(-smoothing * deltaTime); // smoothing 값이 클수록 더 빠르게 따라감
       return THREE.MathUtils.lerp(current, target, factor);
     }
 
@@ -392,33 +401,53 @@
       const pitchInput = (keys['ArrowUp'] ? 1 : 0) - (keys['ArrowDown'] ? 1 : 0);
       const strafeInput = (keys['ArrowRight'] ? 1 : 0) - (keys['ArrowLeft'] ? 1 : 0);
 
-      rotationState.manualBank += rollInput * turnSpeed * delta;
+      // 앞으로 가속할수록 스로틀이 3초 동안 서서히 1까지 상승
+      if (keys['KeyW']) {
+        throttle = Math.min(1, throttle + delta / 3); // 약 3초 동안 0→1
+      } else {
+        throttle = Math.max(0, throttle - delta / 1.5); // 키를 떼면 1.5초 정도에 다시 0으로
+      }
+      const currentMaxSpeed = THREE.MathUtils.lerp(baseMaxSpeed, boostedMaxSpeed, throttle); // 스로틀이 1이면 3배 속도
+      const currentAcceleration = THREE.MathUtils.lerp(acceleration, acceleration * 3, throttle); // 가속도도 스로틀에 따라 3배까지 증가
+
+      rotationState.manualBank += rollInput * turnSpeed * delta; // Q/E 직접 롤 입력
       rotationState.manualBank = THREE.MathUtils.clamp(
         rotationState.manualBank,
-        THREE.MathUtils.degToRad(-75),
-        THREE.MathUtils.degToRad(75),
+        -maxAutoBankAngle,
+        maxAutoBankAngle,
       );
       if (rollInput === 0) {
-        rotationState.manualBank = damp(rotationState.manualBank, 0, 4.5, delta);
+        rotationState.manualBank = damp(rotationState.manualBank, 0, 4.5, delta); // 입력 해제 시 서서히 수평 복귀
       }
 
-      const autoBankTarget = THREE.MathUtils.degToRad(-(strafeInput * 38 + yawInput * 18));
-      rotationState.autoBank = damp(rotationState.autoBank, autoBankTarget, 6, delta);
+      // 선회 중에는 입력을 오래 유지할수록 배가 하늘을 향하도록 기울기 목표를 누적한다
+      const steeringComposite = yawInput + strafeInput * 0.6; // 좌우 회전과 횡이동 입력을 묶어 기울기 누적
+      if (steeringComposite !== 0) {
+        rotationState.autoBankGoal = THREE.MathUtils.clamp(
+          rotationState.autoBankGoal + steeringComposite * bankAccumRate * delta,
+          -maxAutoBankAngle,
+          maxAutoBankAngle,
+        );
+      } else {
+        // rotationState.autoBankGoal = damp(rotationState.autoBankGoal, 0, bankReturnSmoothing, delta); // 입력 없을 때 서서히 수평으로 복귀
+      }
+
+      rotationState.autoBank = damp(rotationState.autoBank, rotationState.autoBankGoal, 6, delta); // 목표 기울기를 향해 부드럽게 이동
       const totalBank = THREE.MathUtils.clamp(
         rotationState.manualBank + rotationState.autoBank,
-        THREE.MathUtils.degToRad(-80),
-        THREE.MathUtils.degToRad(80),
+        -maxAutoBankAngle,
+        maxAutoBankAngle,
       );
 
-      rotationState.yaw += yawInput * turnSpeed * delta;
-      rotationState.yaw += THREE.MathUtils.degToRad(strafeInput * 48) * delta; // 좌우 입력 시 자동 선회
+      rotationState.yaw += yawInput * turnSpeed * delta; // 방향키 유지 시 초당 36°로 지속 선회
+      rotationState.yaw += THREE.MathUtils.degToRad(-strafeInput * yawAutoStrafeFactor) * delta; // 횡이동 입력 시 추가 선회 (우측 입력이면 시계방향)
 
       const pitchTarget = THREE.MathUtils.clamp(
         rotationState.pitch + pitchInput * turnSpeed * delta,
         -Math.PI / 2.5,
         Math.PI / 2.5,
       );
-      rotationState.pitch = damp(rotationState.pitch, pitchTarget, 8, delta);
+      rotationState.pitch = damp(rotationState.pitch, pitchTarget, 8, delta); // 피치는 급격하지 않게 감쇄 적용
 
       ship.rotation.set(rotationState.pitch, rotationState.yaw, totalBank);
 
@@ -429,7 +458,7 @@
 
       // 추진, 브레이크, 부스터 입력 처리
       const isBoosting = keys['ShiftLeft'] || keys['ShiftRight'];
-      const thrust = (keys['KeyW'] ? acceleration : 0) * (isBoosting ? boostMultiplier : 1); // 기본 추진력 × 부스터
+      const thrust = (keys['KeyW'] ? currentAcceleration : 0) * (isBoosting ? boostMultiplier : 1); // 스로틀과 부스터 반영 가속도
       const braking = keys['Space'] ? brakingForce : 0; // 제동 입력 시 감속량
 
       if (thrust > 0) {
@@ -450,7 +479,7 @@
 
       // 좌우/상하 이동 입력 반영
       if (strafeInput !== 0) {
-        velocity.addScaledVector(rightVector, strafeInput * strafeAcceleration * delta);
+        velocity.addScaledVector(rightVector, strafeInput * strafeAcceleration * delta); // 횡이동 입력이 있을 때 곡선 비행에 더해짐
       }
 
       const verticalInput = (keys['KeyR'] ? 1 : 0) - (keys['KeyF'] ? 1 : 0);
@@ -459,7 +488,8 @@
       }
 
       // 속도 제한과 감속 적용
-      clampLength(velocity, maxSpeed * (isBoosting ? 1.35 : 1)); // 부스터 시 최고속 약 35% 증가
+      const maxSpeedMultiplier = isBoosting ? 1.35 : 1;
+      clampLength(velocity, currentMaxSpeed * maxSpeedMultiplier); // 스로틀/부스터 조합에 따라 최고 속도 제한
       const appliedDamping = isBoosting ? damping + 0.004 : damping; // 부스터 중 감쇠를 소폭 완화
       velocity.multiplyScalar(appliedDamping);
 

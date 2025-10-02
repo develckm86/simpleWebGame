@@ -79,12 +79,12 @@
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x030611, 1);
+    renderer.setClearColor(0x030611, 1); // 깊은 우주색 배경
     if ('outputColorSpace' in renderer) {
       renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 1.05; // 약간 밝게 보정
     renderer.physicallyCorrectLights = true;
     document.body.appendChild(renderer.domElement);
 
@@ -92,20 +92,20 @@
     const scene = new THREE.Scene();
 
     // 플레이어 시점을 담당할 카메라 설정
-    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 2000);
-    camera.position.set(0, 2.2, 6);
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 2000); // 넓은 시야각과 긴 투영 거리
+    camera.position.set(0, 2.2, 6); // 우주선 뒤·위에서 시작 위치
 
     // 기본 조명을 배치해 모델을 보기 좋게 만든다
-    const ambient = new THREE.AmbientLight(0x96b4ff, 0.35);
+    const ambient = new THREE.AmbientLight(0x96b4ff, 0.35); // 은은한 파란색 주변광
     scene.add(ambient);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.85);
-    keyLight.position.set(12, 18, 8);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.85); // 메인 라이트, 꽤 밝은 강도
+    keyLight.position.set(12, 18, 8); // 우측 상단에서 비추도록 배치
     scene.add(keyLight);
 
     // 우주선 윤곽을 강조할 보조 조명
-    const rimLight = new THREE.PointLight(0x3a7bff, 1.4, 40, 1.8);
-    rimLight.position.set(-6, -2, -4);
+    const rimLight = new THREE.PointLight(0x3a7bff, 1.4, 40, 1.8); // 파란 테두리 강조 조명
+    rimLight.position.set(-6, -2, -4); // 좌측 뒤쪽에서 살짝 비춰 윤곽을 강조
     scene.add(rimLight);
 
     // 이동/회전에 사용할 우주선 루트 그룹
@@ -117,10 +117,10 @@
     ship.add(shipModel);
 
     // 엔진 화염 이펙트(모델 로딩 후 위치 조정 예정)
-    const flameMaterial = new THREE.MeshBasicMaterial({ color: 0x3fd4ff, transparent: true, opacity: 0.82, side: THREE.DoubleSide });
-    const flameGeom = new THREE.ConeGeometry(0.3, 1.4, 18, 1, true);
+    const flameMaterial = new THREE.MeshBasicMaterial({ color: 0x3fd4ff, transparent: true, opacity: 0.82, side: THREE.DoubleSide }); // 밝은 청록색 엔진 광원
+    const flameGeom = new THREE.ConeGeometry(0.3, 1.4, 18, 1, true); // 가늘고 긴 화염 형태
     const flameMesh = new THREE.Mesh(flameGeom, flameMaterial);
-    flameMesh.rotation.x = Math.PI / 2;
+    flameMesh.rotation.x = Math.PI / 2; // 화염을 Z축 방향으로 뻗도록 회전
     flameMesh.visible = false;
     ship.add(flameMesh);
 
@@ -157,7 +157,7 @@
         model.position.sub(shipCenter);
 
         shipBounds.getSize(shipSize);
-        const targetLength = 3.5;
+        const targetLength = 3.5; // 모델 최대 길이를 3.5단위로 맞춤
         const maxAxis = Math.max(shipSize.x, shipSize.y, shipSize.z) || 1;
         const scale = targetLength / maxAxis;
         model.scale.setScalar(scale);
@@ -171,7 +171,7 @@
         shipBounds.getSize(shipSize);
 
         // 화염 메시를 엔진 뒤쪽으로 이동시키고 표시
-        const exhaustZ = shipBounds.max.z + shipSize.z * 0.12;
+        const exhaustZ = shipBounds.max.z + shipSize.z * 0.12; // 우주선 끝에서 조금 뒤에 화염 배치
         flameMesh.position.set(0, shipBounds.getCenter(new THREE.Vector3()).y, exhaustZ);
         flameMesh.visible = true;
       },
@@ -183,16 +183,16 @@
 
     // 별 배경 생성을 위한 버퍼 지오메트리와 색상 배열
     const starGeometry = new THREE.BufferGeometry();
-    const starCount = 2400;
+    const starCount = 2400; // 넓은 공간감을 위한 총 별 개수
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
     const color = new THREE.Color();
 
     // 구 모양으로 별 좌표와 색상을 무작위 생성
     for (let i = 0; i < starCount; i += 1) {
-      const radius = THREE.MathUtils.randFloat(120, 420);
-      const theta = THREE.MathUtils.randFloat(0, Math.PI * 2);
-      const phi = THREE.MathUtils.randFloat(0, Math.PI);
+      const radius = THREE.MathUtils.randFloat(120, 420); // 최소 120~최대 420유닛 거리에서 배치
+      const theta = THREE.MathUtils.randFloat(0, Math.PI * 2); // 수평 각도
+      const phi = THREE.MathUtils.randFloat(0, Math.PI); // 수직 각도
 
       const x = radius * Math.sin(phi) * Math.cos(theta);
       const y = radius * Math.cos(phi);
@@ -202,7 +202,7 @@
       starPositions[i * 3 + 1] = y;
       starPositions[i * 3 + 2] = z;
 
-      const starTint = THREE.MathUtils.randFloat(0.7, 1);
+      const starTint = THREE.MathUtils.randFloat(0.7, 1); // 밝기 랜덤화
       color.setHSL(THREE.MathUtils.randFloat(0.55, 0.68), THREE.MathUtils.randFloat(0.2, 0.5), starTint);
       color.toArray(starColors, i * 3);
     }
@@ -212,10 +212,10 @@
 
     // 별을 렌더링할 포인트 머티리얼
     const starMaterial = new THREE.PointsMaterial({
-      size: 1.4,
+      size: 1.4, // 화면 거리에 따라 축소되는 별 크기
       vertexColors: true,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.85, // 살짝 투명
       depthWrite: false,
       sizeAttenuation: true,
     });
@@ -225,13 +225,13 @@
     scene.add(stars);
 
     // 소행성 군집을 위한 머티리얼과 그룹
-    const rockMaterial = new THREE.MeshStandardMaterial({ color: 0x585664, roughness: 0.85, metalness: 0.1 });
+    const rockMaterial = new THREE.MeshStandardMaterial({ color: 0x585664, roughness: 0.85, metalness: 0.1 }); // 거친 암석 재질
     const rocks = new THREE.Group();
     scene.add(rocks);
 
     // 랜덤 크기와 위치의 소행성을 생성
-    for (let i = 0; i < 18; i += 1) {
-      const radius = THREE.MathUtils.randFloat(1.5, 5.5);
+    for (let i = 0; i < 18; i += 1) { // 18개의 소행성 생성
+      const radius = THREE.MathUtils.randFloat(1.5, 5.5); // 소행성 반지름 범위
       const geom = new THREE.IcosahedronGeometry(radius, THREE.MathUtils.randInt(0, 1));
       const mesh = new THREE.Mesh(geom, rockMaterial.clone());
       mesh.position.set(
@@ -240,7 +240,7 @@
         THREE.MathUtils.randFloatSpread(180),
       );
       mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-      mesh.material.color.offsetHSL(THREE.MathUtils.randFloat(-0.05, 0.05), 0, THREE.MathUtils.randFloat(-0.1, 0.1));
+      mesh.material.color.offsetHSL(THREE.MathUtils.randFloat(-0.05, 0.05), 0, THREE.MathUtils.randFloat(-0.1, 0.1)); // 약간씩 색조·명도 변화를 줌
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       // 각 소행성에 고유 회전 속도를 부여
@@ -274,18 +274,18 @@
     const forwardVector = new THREE.Vector3();
     const rightVector = new THREE.Vector3();
     const upVector = new THREE.Vector3(0, 1, 0);
-    const cameraOffset = new THREE.Vector3(0, 1.8, 5.8);
+    const cameraOffset = new THREE.Vector3(0, 1.8, 5.8); // 우주선 뒤쪽에서 추적할 상대 위치
     const cameraTarget = new THREE.Vector3();
     const cameraLookAt = new THREE.Vector3();
 
     // 비행 조작감을 조절하는 파라미터 모음
-    const acceleration = 22;
-    const strafeAcceleration = 12;
-    const boostMultiplier = 1.8;
-    const brakingForce = 24;
-    const maxSpeed = 42;
-    const damping = 0.985;
-    const turnSpeed = THREE.MathUtils.degToRad(60);
+    const acceleration = 22; // 전진 가속도
+    const strafeAcceleration = 12; // 좌우 이동 가속도
+    const boostMultiplier = 1.8; // 부스터 배율
+    const brakingForce = 24; // 스페이스바 제동력
+    const maxSpeed = 42; // 기본 최고 속도
+    const damping = 0.985; // 속도 감쇠율(마찰)
+    const turnSpeed = THREE.MathUtils.degToRad(60); // 초당 60도 회전 속도
 
     // 속도 벡터가 한계를 넘지 않도록 조정
     function clampLength(vector, max) {
@@ -296,7 +296,7 @@
 
     // 매 프레임 호출되어 물리와 렌더링을 처리
     function animate() {
-      const delta = Math.min(clock.getDelta(), 0.05);
+      const delta = Math.min(clock.getDelta(), 0.05); // 초당 20fps 이하로 떨어질 때 물리 폭주 방지
       const elapsed = clock.getElapsedTime();
 
       // 별과 소행성에 약간씩 움직임을 줘서 장면에 생동감을 부여
@@ -325,21 +325,21 @@
 
       // 추진, 브레이크, 부스터 입력 처리
       const isBoosting = keys['ShiftLeft'] || keys['ShiftRight'];
-      const thrust = (keys['KeyW'] ? acceleration : 0) * (isBoosting ? boostMultiplier : 1);
-      const braking = keys['Space'] ? brakingForce : 0;
+      const thrust = (keys['KeyW'] ? acceleration : 0) * (isBoosting ? boostMultiplier : 1); // 기본 추진력 × 부스터
+      const braking = keys['Space'] ? brakingForce : 0; // 제동 입력 시 감속량
 
       if (thrust > 0) {
         velocity.addScaledVector(forwardVector, thrust * delta);
       }
 
       if (keys['KeyS']) {
-        velocity.addScaledVector(forwardVector, -acceleration * 0.6 * delta);
+        velocity.addScaledVector(forwardVector, -acceleration * 0.6 * delta); // 후진은 60% 힘으로 적용
       }
 
       if (braking > 0) {
         const currentSpeed = velocity.length();
-        if (currentSpeed > 0.01) {
-          const brakeAmount = Math.min(braking * delta, currentSpeed);
+        if (currentSpeed > 0.01) { // 속도가 거의 0이 되면 멈춤
+          const brakeAmount = Math.min(braking * delta, currentSpeed); // 과도한 감속 방지
           velocity.addScaledVector(velocity.clone().normalize(), -brakeAmount);
         }
       }
@@ -352,12 +352,12 @@
 
       const verticalInput = (keys['KeyR'] ? 1 : 0) - (keys['KeyF'] ? 1 : 0);
       if (verticalInput !== 0) {
-        velocity.addScaledVector(upDirection, verticalInput * strafeAcceleration * 0.75 * delta);
+        velocity.addScaledVector(upDirection, verticalInput * strafeAcceleration * 0.75 * delta); // 상하 이동은 좌우보다 조금 느리게
       }
 
       // 속도 제한과 감속 적용
-      clampLength(velocity, maxSpeed * (isBoosting ? 1.35 : 1));
-      const appliedDamping = isBoosting ? damping + 0.004 : damping;
+      clampLength(velocity, maxSpeed * (isBoosting ? 1.35 : 1)); // 부스터 시 최고속 약 35% 증가
+      const appliedDamping = isBoosting ? damping + 0.004 : damping; // 부스터 중 감쇠를 소폭 완화
       velocity.multiplyScalar(appliedDamping);
 
       // 우주선 위치 갱신
@@ -365,15 +365,15 @@
 
       // 카메라를 우주선 뒤에서 따라가도록 보간
       cameraTarget.copy(cameraOffset).applyQuaternion(ship.quaternion).add(ship.position);
-      camera.position.lerp(cameraTarget, 0.15);
+      camera.position.lerp(cameraTarget, 0.15); // 현재 위치에서 목표 위치로 15%씩 보간
 
-      cameraLookAt.copy(ship.position).addScaledVector(forwardVector, 8);
+      cameraLookAt.copy(ship.position).addScaledVector(forwardVector, 8); // 시선 대상은 우주선 앞쪽 8유닛
       camera.lookAt(cameraLookAt);
 
       // 엔진 화염의 크기와 투명도를 입력에 따라 조절
-      const thrustPulse = Math.sin(elapsed * 12) * 0.12 + 0.88;
-      flameMesh.scale.set(1, thrustPulse * (isBoosting ? 2.4 : 1.4), thrustPulse * (keys['KeyW'] ? 2.2 : 1.2));
-      flameMesh.material.opacity = THREE.MathUtils.lerp(flameMesh.material.opacity, keys['KeyW'] || isBoosting ? 0.92 : 0.4, 0.1);
+      const thrustPulse = Math.sin(elapsed * 12) * 0.12 + 0.88; // 초당 12회 맥동으로 엔진 흔들림
+      flameMesh.scale.set(1, thrustPulse * (isBoosting ? 2.4 : 1.4), thrustPulse * (keys['KeyW'] ? 2.2 : 1.2)); // 부스터 시 화염 길이 증가
+      flameMesh.material.opacity = THREE.MathUtils.lerp(flameMesh.material.opacity, keys['KeyW'] || isBoosting ? 0.92 : 0.4, 0.1); // 추진 시 더 밝아지도록 보간
 
       // 장면 렌더링 후 다음 프레임을 예약
       renderer.render(scene, camera);
